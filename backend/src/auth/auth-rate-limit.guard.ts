@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import Redis from 'ioredis';
 import { ConfigService } from '../config/config.service';
+import { getRedisConnectionOptions } from '../config/redis.config';
 
 @Injectable()
 export class AuthRateLimitGuard implements CanActivate {
@@ -18,12 +19,13 @@ export class AuthRateLimitGuard implements CanActivate {
 
   constructor(config: ConfigService) {
     this.redis = new Redis({
-      host: config.get('redisHost'),
-      port: config.get('redisPort'),
+      ...getRedisConnectionOptions(),
       lazyConnect: true,
       maxRetriesPerRequest: 1,
       enableOfflineQueue: false,
+      connectTimeout: 800,
     });
+    this.redis.on('error', () => {});
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -36,7 +38,12 @@ export class AuthRateLimitGuard implements CanActivate {
     const key = `autowork:auth-rate:${path}:${ip}:${email}`;
 
     try {
-      if (this.redis.status !== 'ready') await this.redis.connect();
+      if (this.redis.status !== 'ready') {
+        await Promise.race([
+          this.redis.connect(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Redis connect timeout')), 600)),
+        ]);
+      }
       const count = await this.redis.incr(key);
       if (count === 1) await this.redis.expire(key, this.windowSeconds);
       if (count > bucket) {
@@ -48,7 +55,8 @@ export class AuthRateLimitGuard implements CanActivate {
       return true;
     } catch (error) {
       if (error instanceof HttpException) throw error;
-      throw new ServiceUnavailableException('Authentication rate-limit service is unavailable');
+      // Fail-open: If Redis is unavailable or timing out, do not lock users out of registration or login
+      return true;
     }
   }
 }

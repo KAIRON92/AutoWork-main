@@ -2,10 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import axios from 'axios';
+import { apiClient } from '@/services/apiClient';
 import { Cloud, ArrowLeft, CheckCircle2, Mail } from 'lucide-react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -18,7 +16,7 @@ export default function ForgotPasswordPage() {
 
     try {
       setLoading(true);
-      await axios.post(`${API_BASE}/v1/auth/forgot-password`, { email });
+      await apiClient.post('/v1/auth/forgot-password', { email });
       setSubmitted(true);
     } catch {
       setSubmitted(true); // Always display success confirmation for security

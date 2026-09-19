@@ -86,7 +86,7 @@ export function Header() {
               <p className="text-xs font-semibold text-slate-800 leading-none">
                 {user ? `${user.firstName} ${user.lastName}` : 'Account'}
               </p>
-              <p className="text-[10px] text-slate-500 font-medium leading-tight mt-0.5 max-w-[120px] truncate">
+              <p className="text-[10px] text-slate-500 font-medium leading-tight mt-0.5 max-w-30 truncate">
                 {user?.email || 'Logged In'}
               </p>
             </div>

@@ -27,16 +27,28 @@ export class PCloudFilesService {
 
   async listFolder(organizationId: string, accountId?: string, folderId: string = '0') {
     const account = await this.resolveAccount(organizationId, accountId);
-    const { credential: token, apiHost } = await this.accountsService.getAccountCredentials(account.id, organizationId);
-    const adapter = PCloudAdapterFactory.getAdapter(account.provider);
-    return await adapter.listContents(folderId, token, apiHost || undefined);
+    try {
+      const { credential: token, apiHost } = await this.accountsService.getAccountCredentials(account.id, organizationId);
+      const adapter = PCloudAdapterFactory.getAdapter(account.provider);
+      return await adapter.listContents(folderId, token, apiHost || undefined);
+    } catch (err: any) {
+      return [];
+    }
   }
 
   async findAllStoredFiles(organizationId: string) {
-    return await this.prisma.pCloudFile.findMany({
+    const files = await this.prisma.pCloudFile.findMany({
       where: { organizationId },
       include: { pcloudAccount: { select: { id: true, name: true, accountEmail: true } } },
       orderBy: { createdAt: 'desc' },
+    });
+    return files.filter((f) => {
+      try {
+        const meta = f.metadata ? JSON.parse(f.metadata) : {};
+        return !meta.unregistered;
+      } catch {
+        return true;
+      }
     });
   }
 
@@ -115,7 +127,48 @@ export class PCloudFilesService {
     const file = await this.prisma.pCloudFile.findFirst({ where: { id, organizationId } });
     if (!file) throw new NotFoundException(`pCloud file ${id} not found`);
 
-    await this.prisma.pCloudFile.delete({ where: { id } });
-    return { success: true, message: `File reference ${id} removed` };
+    // Check if actively being used by a running campaign
+    const activeCampaign = await this.prisma.campaign.findFirst({
+      where: { pcloudFileId: id, organizationId, status: { in: ['PROCESSING', 'QUEUED'] } },
+    });
+    if (activeCampaign) {
+      throw new BadRequestException(
+        `Cannot delete "${file.name}" because campaign "${activeCampaign.name}" is currently ${activeCampaign.status}. Pause or complete the campaign before removing this file.`
+      );
+    }
+
+    try {
+      // Check if file is linked to any campaigns or executions (historical preservation)
+      const linkedCampaignCount = await this.prisma.campaign.count({ where: { pcloudFileId: id } });
+      const linkedExecCount = await this.prisma.pCloudShareExecution.count({ where: { pcloudFileId: id } });
+
+      if (linkedCampaignCount > 0 || linkedExecCount > 0) {
+        // PRESERVE CAMPAIGN HISTORY: Do NOT delete the campaigns or recipients!
+        // Mark file as unregistered in metadata so it is removed from active Vault while preserving historical campaigns.
+        let existingMeta: Record<string, any> = {};
+        try {
+          existingMeta = file.metadata ? JSON.parse(file.metadata) : {};
+        } catch {}
+
+        await this.prisma.pCloudFile.update({
+          where: { id },
+          data: {
+            metadata: JSON.stringify({
+              ...existingMeta,
+              unregistered: true,
+              unregisteredAt: new Date().toISOString(),
+            }),
+          },
+        });
+        return { success: true, message: `File reference "${file.name}" unlinked. Past campaign histories are preserved.` };
+      }
+
+      // If no campaigns or executions ever used this file, it is safe to completely delete
+      await this.prisma.pCloudFile.delete({ where: { id } });
+      return { success: true, message: `File reference "${file.name}" removed successfully.` };
+    } catch (err: any) {
+      if (err instanceof BadRequestException || err instanceof NotFoundException) throw err;
+      throw new BadRequestException(`Unable to remove file "${file.name}": ${err.message || 'database constraint'}`);
+    }
   }
 }

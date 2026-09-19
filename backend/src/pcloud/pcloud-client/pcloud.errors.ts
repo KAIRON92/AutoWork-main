@@ -10,7 +10,8 @@ export class PCloudErrorMapper {
         return { code: PCloudErrorCode.PCLOUD_AUTH_FAILED, rawCode: rawResult, message: `pCloud Authentication Failed: ${msg}`, isTransient: false, timestamp: new Date().toISOString() };
       case 2003:
       case 2016:
-        return { code: PCloudErrorCode.PCLOUD_PERMISSION_DENIED, rawCode: rawResult, message: `pCloud Permission Denied: ${msg}`, isTransient: false, timestamp: new Date().toISOString() };
+      case 2076:
+        return { code: PCloudErrorCode.PCLOUD_PERMISSION_DENIED, rawCode: rawResult, message: `pCloud Permission Denied (${rawResult}): ${msg}. The file/folder sharing fallback will generate a public link instead.`, isTransient: false, timestamp: new Date().toISOString() };
       case 2005:
       case 2009:
         return { code: PCloudErrorCode.PCLOUD_FILE_NOT_FOUND, rawCode: rawResult, message: `pCloud File or Folder Not Found: ${msg}`, isTransient: false, timestamp: new Date().toISOString() };
@@ -27,6 +28,8 @@ export class PCloudErrorMapper {
         return { code: PCloudErrorCode.PCLOUD_VERIFICATION_REQUIRED, rawCode: rawResult, message: `pCloud Verification Required: ${msg}`, isTransient: false, timestamp: new Date().toISOString() };
       case 2088:
         return { code: PCloudErrorCode.PCLOUD_FILE_SHARE_UNSUPPORTED, rawCode: rawResult, message: `pCloud transfer requires an uploaded file payload: ${msg}`, isTransient: false, timestamp: new Date().toISOString() };
+      case 2303:
+        return { code: PCloudErrorCode.PCLOUD_PERMISSION_DENIED, rawCode: rawResult, message: `pCloud Privacy Policy restriction (${rawResult}): ${msg}. Will fallback to public link delivery.`, isTransient: false, timestamp: new Date().toISOString() };
       case 2321:
         return { code: PCloudErrorCode.PCLOUD_WRONG_REGION, rawCode: rawResult, message: `pCloud wrong region — the API host does not match this account's data location. Re-discover the correct host: ${msg}`, isTransient: true, timestamp: new Date().toISOString() };
       case 4000:

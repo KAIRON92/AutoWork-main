@@ -10,7 +10,7 @@ storage/
 **/storage/
 
 # Allow example env files
-!.env.example
+!**/.env.example
 
 # Dependencies
 node_modules/
@@ -70,6 +70,10 @@ download_chunked.py
 
 # Vercel / Deployments
 .vercel/
+
+# Binaries
+*.exe
+*.dll
 
 # TypeScript
 *.tsbuildinfo

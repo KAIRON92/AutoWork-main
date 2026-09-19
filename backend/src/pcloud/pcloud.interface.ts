@@ -92,6 +92,6 @@ export interface IPCloudAdapter {
   downloadFileBuffer(fileId: string, accessToken: string, apiHost?: string): Promise<{ buffer: Buffer; name: string; mimeType: string }>;
   uploadFile(options: { filename: string; buffer: Buffer; mimeType: string; folderId?: string; accessToken: string; apiHost?: string }): Promise<PCloudItemMetadata>;
   shareFolder(options: PCloudShareOptions, accessToken: string, apiHost?: string): Promise<PCloudShareResult>;
-  createTransfer(options: PCloudTransferOptions, accessToken: string, apiHost?: string): Promise<PCloudShareResult>;
+  createTransfer(options: PCloudTransferOptions, accessToken: string, apiHost?: string, preloadedFile?: { buffer: Buffer; name: string; mimeType: string }): Promise<PCloudShareResult>;
   deleteFile(fileId: string, accessToken: string, apiHost?: string): Promise<boolean>;
 }

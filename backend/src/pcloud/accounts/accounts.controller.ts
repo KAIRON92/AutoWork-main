@@ -35,10 +35,28 @@ export class PCloudAccountsController {
   @Get('oauth/url')
   @Roles('ADMIN', 'MEMBER')
   @ApiOperation({ summary: 'Generate official pCloud OAuth 2.0 authorization URL' })
-  async getOAuthUrl(@Request() req: any) {
+  async getOAuthUrl(@Request() req: any, @Query('location') location?: string, @Query('origin') origin?: string) {
     const orgId = currentOrgId(req);
     const userId = currentUserId(req);
-    return this.accountsService.getOAuthAuthorizeUrl(orgId, userId);
+    const forwardedHost = req.headers?.['x-forwarded-host'];
+    const forwardedProto = req.headers?.['x-forwarded-proto'] || 'https';
+    const frontendOrigin = origin?.trim() || (forwardedHost ? `${forwardedProto}://${forwardedHost}` : undefined);
+    return this.accountsService.getOAuthAuthorizeUrl(orgId, userId, location, frontendOrigin);
+  }
+
+  @Post('oauth/exchange')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Directly exchange an authorization code for a connected pCloud account' })
+  async exchangeOAuthCode(
+    @Body() body: { code: string; name?: string; dailyLimit?: number },
+    @Request() req: any,
+  ) {
+    return this.accountsService.exchangeCodeDirect(
+      currentOrgId(req),
+      body.code,
+      body.name,
+      body.dailyLimit,
+    );
   }
 
   @Get('oauth/callback')
@@ -50,13 +68,17 @@ export class PCloudAccountsController {
     @Query('hostname') hostname: string,
     @Res() res: Response,
   ) {
-    const frontend = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const defaultFrontend = process.env.FRONTEND_URL || 'http://localhost:3000';
+    let targetFrontend = defaultFrontend;
     try {
-      await this.accountsService.handleOAuthCallback(code, state, locationid, hostname);
-      return res.redirect(`${frontend}/accounts?connected=pcloud`);
+      const result = await this.accountsService.handleOAuthCallback(code, state, locationid, hostname);
+      if (result?.frontendOrigin) {
+        targetFrontend = result.frontendOrigin;
+      }
+      return res.redirect(`${targetFrontend}/accounts?connected=pcloud`);
     } catch (error: any) {
       const message = encodeURIComponent(error?.message || 'pCloud OAuth connection failed');
-      return res.redirect(`${frontend}/accounts?error=${message}`);
+      return res.redirect(`${targetFrontend}/accounts?error=${message}`);
     }
   }
 

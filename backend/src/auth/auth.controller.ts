@@ -15,19 +15,39 @@ import { AuthRateLimitGuard } from './auth-rate-limit.guard';
 const AUTH_COOKIE = 'autowork_jwt_token';
 const AUTH_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
-function setAuthCookie(res: Response, token: string) {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+function setAuthCookie(req: any, res: Response, token: string) {
+  const host = String(req?.headers?.['host'] || req?.headers?.['x-forwarded-host'] || '');
+  const origin = String(req?.headers?.['origin'] || req?.headers?.['referer'] || '');
+  const isHttps =
+    process.env.NODE_ENV === 'production' ||
+    req?.headers?.['x-forwarded-proto'] === 'https' ||
+    req?.headers?.['cf-visitor']?.includes('https') ||
+    origin.startsWith('https:') ||
+    Boolean(req?.secure);
+  const isCrossOrigin = Boolean(origin && !origin.includes(host) && isHttps);
+  const sameSite = isCrossOrigin ? 'None' : 'Lax';
+  const secure = isHttps || isCrossOrigin ? '; Secure' : '';
   res.setHeader(
     'Set-Cookie',
-    `${AUTH_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${AUTH_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${secure}`,
+    `${AUTH_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${AUTH_MAX_AGE_SECONDS}; HttpOnly; SameSite=${sameSite}${secure}`,
   );
 }
 
-function clearAuthCookie(res: Response) {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+function clearAuthCookie(req: any, res: Response) {
+  const host = String(req?.headers?.['host'] || req?.headers?.['x-forwarded-host'] || '');
+  const origin = String(req?.headers?.['origin'] || req?.headers?.['referer'] || '');
+  const isHttps =
+    process.env.NODE_ENV === 'production' ||
+    req?.headers?.['x-forwarded-proto'] === 'https' ||
+    req?.headers?.['cf-visitor']?.includes('https') ||
+    origin.startsWith('https:') ||
+    Boolean(req?.secure);
+  const isCrossOrigin = Boolean(origin && !origin.includes(host) && isHttps);
+  const sameSite = isCrossOrigin ? 'None' : 'Lax';
+  const secure = isHttps || isCrossOrigin ? '; Secure' : '';
   res.setHeader(
     'Set-Cookie',
-    `${AUTH_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`,
+    `${AUTH_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=${sameSite}${secure}`,
   );
 }
 
@@ -42,30 +62,41 @@ export class AuthController {
   async login(
     @Body() body: { email: string; password: string },
     @Res({ passthrough: true }) res: Response,
+    @Request() req: any,
   ) {
     const result = await this.authService.login(body.email, body.password);
-    setAuthCookie(res, result.token);
-    const { token: _token, ...safeResponse } = result;
-    return safeResponse;
+    setAuthCookie(req, res, result.token);
+    return result;
   }
 
   @Post('register')
   @UseGuards(AuthRateLimitGuard)
   @ApiOperation({ summary: 'Register a new tenant organization and administrator' })
   async register(
-    @Body() body: { email: string; password: string; firstName: string; lastName: string; organizationName: string },
+    @Body() body: { email: string; password: string; firstName?: string; lastName?: string; organizationName?: string },
     @Res({ passthrough: true }) res: Response,
+    @Request() req: any,
   ) {
     const result = await this.authService.register(body);
-    setAuthCookie(res, result.token);
-    const { token: _token, ...safeResponse } = result;
-    return safeResponse;
+    setAuthCookie(req, res, result.token);
+    return result;
+  }
+
+  @Post('demo-login')
+  @ApiOperation({ summary: 'Instant 1-Click Demo Login for remote testers and clients' })
+  async demoLogin(
+    @Res({ passthrough: true }) res: Response,
+    @Request() req: any,
+  ) {
+    const result = await this.authService.getOrCreateDemoUser();
+    setAuthCookie(req, res, result.token);
+    return result;
   }
 
   @Post('logout')
   @ApiOperation({ summary: 'Clear the current authentication session' })
-  async logout(@Res({ passthrough: true }) res: Response) {
-    clearAuthCookie(res);
+  async logout(@Res({ passthrough: true }) res: Response, @Request() req: any) {
+    clearAuthCookie(req, res);
     return { success: true };
   }
 

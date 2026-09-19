@@ -1,0 +1,55 @@
+# ==============================================================================
+# Render Blueprint for AutoWork SaaS (Backend + PostgreSQL + Redis)
+# ==============================================================================
+# Push this repo to GitHub and click "New Blueprint Instance" on dashboard.render.com
+# Render will automatically provision the PostgreSQL database, Redis, and Web API.
+# ==============================================================================
+
+services:
+  - type: web
+    name: autowork-backend
+    env: node
+    plan: standard
+    rootDir: backend
+    buildCommand: npm ci && npx prisma generate --schema=../prisma/schema.prisma && npm run build
+    startCommand: npx prisma db push --schema=../prisma/schema.prisma && npm run start:prod
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: autowork-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: autowork-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PCLOUD_CREDENTIAL_ENCRYPTION_KEY
+        value: X1LEAIg6nJyed26Ze3kI62oh0+M/cP3cSGJON0yzVnk=
+      - key: PCLOUD_DEFAULT_PROVIDER
+        value: pcloud
+      - key: PCLOUD_ALLOW_MOCK
+        value: "true"
+      - key: PCLOUD_CLIENT_ID
+        value: LKgngYPdexJ
+      - key: PCLOUD_CLIENT_SECRET
+        value: Iv2AO9hDCYYKaWBjwYYigJA6BJkk
+      - key: FRONTEND_URL
+        sync: false # Set this to your Vercel URL, e.g. https://your-project.vercel.app
+
+  - type: redis
+    name: autowork-redis
+    plan: starter
+    ipAllowList: [] # internal access only
+
+databases:
+  - name: autowork-postgres
+    plan: starter
+    databaseName: autowork_db
+    user: autowork

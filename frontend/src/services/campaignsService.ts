@@ -15,7 +15,16 @@ export const campaignsService = {
   async create(data: {
     name: string;
     pcloudAccountId: string;
-    pcloudFileId: string;
+    pcloudFileId?: string;
+    pcloudFileIds?: string[];
+    tasks?: Array<{
+      id?: string;
+      name?: string;
+      fileIds: string[];
+      contactIds?: string[];
+      contactListId?: string;
+      messageOverride?: string;
+    }>;
     templateId: string;
     emailAccountId?: string;
     contactListId?: string;
@@ -28,6 +37,8 @@ export const campaignsService = {
       shareType?: 'sharefolder' | 'uploadtransfer';
       rateLimitPerMinute?: number;
       retryCount?: number;
+      distributionMode?: 'UNIFORM' | 'MULTI_TASK';
+      tasks?: any[];
     };
   }): Promise<Campaign> {
     const res = await apiClient.post('/v1/campaigns', data);
@@ -47,5 +58,10 @@ export const campaignsService = {
   async delete(id: string): Promise<boolean> {
     await apiClient.delete(`/v1/campaigns/${id}`);
     return true;
+  },
+
+  async retryRecipient(campaignId: string, recipientId: string): Promise<any> {
+    const res = await apiClient.post(`/v1/campaigns/${campaignId}/recipients/${recipientId}/retry`);
+    return res.data;
   },
 };

@@ -80,6 +80,24 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        <div className="bg-white p-6 rounded-2xl border border-rose-200/70 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">Session & Security</h2>
+              <p className="text-xs text-slate-500 mt-0.5">End your current session across this device.</p>
+            </div>
+            <button
+              onClick={async () => {
+                await authService.logout();
+                window.location.href = '/login';
+              }}
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-xs cursor-pointer"
+            >
+              Log Out Now
+            </button>
+          </div>
+        </div>
       </div>
     </Shell>
   );

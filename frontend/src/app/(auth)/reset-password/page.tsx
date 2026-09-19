@@ -2,11 +2,9 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import axios from 'axios';
+import { apiClient } from '@/services/apiClient';
 import { Cloud, ArrowLeft, CheckCircle2, Lock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -25,7 +23,7 @@ export default function ResetPasswordPage() {
 
     try {
       setLoading(true);
-      await axios.post(`${API_BASE}/v1/auth/reset-password`, { token, password });
+      await apiClient.post('/v1/auth/reset-password', { token, password });
       setSubmitted(true);
     } catch (err: any) {
       alert(`Reset failed: ${err.message}`);

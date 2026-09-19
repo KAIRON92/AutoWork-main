@@ -110,6 +110,30 @@ export type Template = {
 
 export type CampaignStatus = 'DRAFT' | 'QUEUED' | 'PROCESSING' | 'PAUSED' | 'COMPLETED' | 'FAILED';
 
+export type CampaignRecipient = {
+  id: string;
+  campaignId: string;
+  recipientEmail: string;
+  randomCode?: string | null;
+  status: 'PENDING' | 'QUEUED' | 'PROCESSING' | 'SHARED' | 'DELIVERED' | 'FAILED';
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  pcloudShareExecutionId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CampaignTask = {
+  id: string;
+  name: string;
+  fileIds: string[];
+  contactIds?: string[];
+  contactListId?: string;
+  templateId?: string;
+  subjectOverride?: string;
+  messageOverride?: string;
+};
+
 export type Campaign = {
   id: string;
   name: string;
@@ -140,9 +164,25 @@ export type Campaign = {
   pcloudFile?: {
     id: string;
     name: string;
-    fileId: string;
+    fileId?: string;
     pcloudPath?: string;
+    fileSize?: number;
+    size?: number;
+    mimeType?: string;
+    metadata?: any;
   };
+  files?: Array<{
+    id: string;
+    name: string;
+    fileId?: string;
+    pcloudPath?: string;
+    fileSize?: number;
+    size?: number;
+    mimeType?: string;
+    metadata?: any;
+  }>;
+  distributionMode?: 'UNIFORM' | 'MULTI_TASK';
+  tasks?: CampaignTask[];
   template?: {
     id: string;
     name: string;
@@ -151,7 +191,7 @@ export type Campaign = {
     id: string;
     name: string;
   };
-  recipients?: any[];
+  recipients?: CampaignRecipient[];
   executions?: PCloudShareExecution[];
   createdAt: string;
 };

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "build": "cd frontend && npm run build",
     "worker:campaign": "ts-node -r dotenv/config workers/campaign.worker.entry.ts",
     "worker:pcloud": "ts-node -r dotenv/config workers/pcloud-share.worker.entry.ts",
     "worker:email": "ts-node -r dotenv/config workers/email-dispatch.worker.entry.ts",

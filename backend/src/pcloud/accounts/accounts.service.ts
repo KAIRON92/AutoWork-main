@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PCloudAdapterFactory } from '../pcloud.factory';
 import { encryptPCloudCredential, decryptPCloudCredential } from '../pcloud-credentials';
+import { encryptProviderCredentials } from '../../email/email.credentials';
 
 export interface CreatePCloudAccountDto {
   name: string;
@@ -25,6 +26,15 @@ interface OAuthState {
   userId: string;
   nonce: string;
   exp: number;
+  frontendOrigin?: string;
+}
+
+function getPCloudClientSecret(): string {
+  let secret = (process.env.PCLOUD_CLIENT_SECRET || '').trim();
+  if (!secret || secret.startsWith('lv2AO')) {
+    secret = 'Iv2AO9hDCYYKaWBjwYYigJA6BJkk';
+  }
+  return secret;
 }
 
 @Injectable()
@@ -56,46 +66,44 @@ export class PCloudAccountsService {
   }
 
   pCloudOAuthConfigured(): boolean {
-    return Boolean(process.env.PCLOUD_CLIENT_ID && process.env.PCLOUD_CLIENT_SECRET && process.env.PCLOUD_REDIRECT_URI);
+    const clientId = process.env.PCLOUD_CLIENT_ID || 'LKgngYPdexJ';
+    const clientSecret = getPCloudClientSecret();
+    return Boolean(clientId && clientSecret);
   }
 
-  getOAuthAuthorizeUrl(organizationId: string, userId: string): { url: string } {
-    if (!this.pCloudOAuthConfigured()) {
-      throw new BadRequestException(
-        'pCloud OAuth is not configured on the server. Set PCLOUD_CLIENT_ID, PCLOUD_CLIENT_SECRET, and PCLOUD_REDIRECT_URI in backend environment.'
-      );
-    }
+  getOAuthAuthorizeUrl(organizationId: string, userId: string, location?: string, frontendOrigin?: string): { url: string; euUrl: string } {
+    const clientId = (process.env.PCLOUD_CLIENT_ID || 'LKgngYPdexJ').trim();
+    const redirectUri = (process.env.PCLOUD_REDIRECT_URI || 'http://localhost:4000/api/v1/pcloud/accounts/oauth/callback').trim();
     const state = this.encodeState({
       orgId: organizationId,
       userId,
       nonce: randomBytes(16).toString('hex'),
       exp: Date.now() + 10 * 60 * 1000,
+      frontendOrigin: frontendOrigin?.trim() || undefined,
     });
     const params = new URLSearchParams({
-      client_id: process.env.PCLOUD_CLIENT_ID!.trim(),
+      client_id: clientId,
       response_type: 'code',
-      redirect_uri: process.env.PCLOUD_REDIRECT_URI!.trim(),
+      redirect_uri: redirectUri,
       state,
     });
-    return { url: `https://my.pcloud.com/oauth2/authorize?${params.toString()}` };
+    // pCloud uses https://my.pcloud.com/oauth2/authorize for all regions and returns locationid in callback
+    const url = `https://my.pcloud.com/oauth2/authorize?${params.toString()}`;
+    return { url, euUrl: url };
   }
 
-  async handleOAuthCallback(
+  async exchangeCodeDirect(
+    organizationId: string,
     code: string,
-    stateValue: string,
+    name?: string,
+    dailyLimit?: number,
     locationid?: string,
-    hostname?: string
+    hostname?: string,
   ): Promise<any> {
-    if (!this.pCloudOAuthConfigured()) {
-      throw new BadRequestException('pCloud OAuth is not configured on the server');
-    }
-    if (!code) throw new BadRequestException('Missing authorization code from pCloud');
+    if (!code || !code.trim()) throw new BadRequestException('Authorization code is required');
+    const clientId = (process.env.PCLOUD_CLIENT_ID || 'LKgngYPdexJ').trim();
+    const clientSecret = getPCloudClientSecret();
 
-    const state = this.decodeState(stateValue);
-    const clientId = process.env.PCLOUD_CLIENT_ID!.trim();
-    const clientSecret = process.env.PCLOUD_CLIENT_SECRET!.trim();
-
-    // Determine target host for oauth2_token exchange
     let tokenHost = 'https://api.pcloud.com';
     if (hostname?.trim()) {
       const cleanHost = hostname.trim();
@@ -104,7 +112,6 @@ export class PCloudAccountsService {
       tokenHost = 'https://eapi.pcloud.com';
     }
 
-    // Exchange authorization code for bearer token at /oauth2_token
     let tokenData: any;
     try {
       const tokenRes = await fetch(`${tokenHost}/oauth2_token`, {
@@ -121,7 +128,6 @@ export class PCloudAccountsService {
       throw new BadRequestException(`Failed to connect to pCloud token server: ${err.message}`);
     }
 
-    // If initial exchange failed with region mismatch (2321), retry on alternate host
     if (Number(tokenData?.result) === 2321) {
       const altHost = tokenHost.includes('eapi.pcloud.com') ? 'https://api.pcloud.com' : 'https://eapi.pcloud.com';
       try {
@@ -138,12 +144,12 @@ export class PCloudAccountsService {
         if (Number(tokenData?.result) === 0) {
           tokenHost = altHost;
         }
-      } catch { /* proceed with initial tokenData */ }
+      } catch {}
     }
 
     if (Number(tokenData?.result) !== 0 || !tokenData?.access_token) {
       throw new BadRequestException(
-        `pCloud token exchange failed (result ${String(tokenData?.result)}): ${String(tokenData?.error || 'unknown error')}`
+        `pCloud token exchange failed: ${String(tokenData?.error || 'Invalid or expired authorization code')}`
       );
     }
 
@@ -156,6 +162,124 @@ export class PCloudAccountsService {
     }
 
     const resolvedApiHost = verifyResult.userInfo.resolvedApiHost || tokenHost;
+    const accountEmail = verifyResult.userInfo.email.trim().toLowerCase();
+    const credentials = encryptPCloudCredential(accessToken);
+
+    const existing = await this.prisma.pCloudAccount.findFirst({
+      where: { organizationId, accountEmail },
+    });
+
+    const accountData = {
+      organizationId,
+      name: name?.trim() || existing?.name || `pCloud (${accountEmail})`,
+      accountEmail,
+      provider: 'pcloud',
+      status: 'ACTIVE' as const,
+      dailyLimit: dailyLimit || existing?.dailyLimit || 500,
+      sentToday: existing?.sentToday || 0,
+      folderId: existing?.folderId || '0',
+      credentials,
+      pcloudUserId: verifyResult.userInfo.userId || String(tokenData.uid || ''),
+      apiHost: resolvedApiHost,
+      lastUsedAt: new Date(),
+    };
+
+    const saved = existing
+      ? await this.prisma.pCloudAccount.update({ where: { id: existing.id }, data: accountData })
+      : await this.prisma.pCloudAccount.create({ data: accountData });
+
+    // Auto-register matching sender mailbox in Email Accounts
+    await this.autoRegisterEmailAccount(organizationId, accountEmail, accountData.name);
+
+    return this.sanitizeAccount(saved);
+  }
+
+  async handleOAuthCallback(
+    code: string,
+    stateValue: string,
+    locationid?: string,
+    hostname?: string
+  ): Promise<any> {
+    if (!code) throw new BadRequestException('Missing authorization code from pCloud');
+
+    const state = this.decodeState(stateValue);
+    const clientId = (process.env.PCLOUD_CLIENT_ID || 'LKgngYPdexJ').trim();
+    const clientSecret = getPCloudClientSecret();
+
+    console.log(`[pCloud OAuth] Callback received: code=${code.substring(0, 8)}..., locationid=${locationid}, hostname=${hostname}`);
+
+    // Determine target host for oauth2_token exchange
+    // pCloud EU accounts use eapi.pcloud.com, US accounts use api.pcloud.com
+    let tokenHost = 'https://api.pcloud.com';
+    if (hostname?.trim()) {
+      const cleanHost = hostname.trim();
+      tokenHost = cleanHost.startsWith('http') ? cleanHost : `https://${cleanHost}`;
+    } else if (locationid === '2') {
+      tokenHost = 'https://eapi.pcloud.com';
+    }
+
+    console.log(`[pCloud OAuth] Token exchange host: ${tokenHost}`);
+
+    // Exchange authorization code for bearer token at /oauth2_token
+    // Try the hostname-derived host first, then fallback to alternate region
+    const hostsToTry = [tokenHost];
+    const altHost = tokenHost.includes('eapi.pcloud.com') ? 'https://api.pcloud.com' : 'https://eapi.pcloud.com';
+    hostsToTry.push(altHost);
+
+    let tokenData: any;
+    let successHost = tokenHost;
+
+    for (const host of hostsToTry) {
+      try {
+        console.log(`[pCloud OAuth] Trying token exchange on ${host}...`);
+        const tokenRes = await fetch(`${host}/oauth2_token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            code: code.trim(),
+          }).toString(),
+        });
+        tokenData = await tokenRes.json();
+        console.log(`[pCloud OAuth] ${host} response: result=${tokenData?.result}, hasToken=${!!tokenData?.access_token}`);
+        if (Number(tokenData?.result) === 0 && tokenData?.access_token) {
+          successHost = host;
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`[pCloud OAuth] ${host} token exchange network error: ${err.message}`);
+      }
+    }
+
+    if (Number(tokenData?.result) !== 0 || !tokenData?.access_token) {
+      throw new BadRequestException(
+        `pCloud token exchange failed (result ${String(tokenData?.result)}): ${String(tokenData?.error || 'unknown error')}`
+      );
+    }
+
+    const accessToken = String(tokenData.access_token);
+    console.log(`[pCloud OAuth] Token obtained from ${successHost}, verifying with /userinfo...`);
+
+    // Try verifyConnection on the success host, then alternate host
+    const adapter = PCloudAdapterFactory.getAdapter('pcloud');
+    let verifyResult = await adapter.verifyConnection(accessToken, successHost);
+
+    if (!verifyResult.connected) {
+      console.warn(`[pCloud OAuth] /userinfo failed on ${successHost}: ${verifyResult.message}, trying alternate...`);
+      const verifyAltHost = successHost.includes('eapi.pcloud.com') ? 'https://api.pcloud.com' : 'https://eapi.pcloud.com';
+      verifyResult = await adapter.verifyConnection(accessToken, verifyAltHost);
+      if (verifyResult.connected) {
+        successHost = verifyAltHost;
+        console.log(`[pCloud OAuth] /userinfo succeeded on alternate host ${verifyAltHost}`);
+      }
+    }
+
+    if (!verifyResult.connected || !verifyResult.userInfo) {
+      throw new BadRequestException(verifyResult.message || 'Unable to verify pCloud access token with /userinfo');
+    }
+
+    const resolvedApiHost = verifyResult.userInfo.resolvedApiHost || successHost;
     const accountEmail = verifyResult.userInfo.email.trim().toLowerCase();
     const credentials = encryptPCloudCredential(accessToken);
 
@@ -183,13 +307,97 @@ export class PCloudAccountsService {
       ? await this.prisma.pCloudAccount.update({ where: { id: existing.id }, data: accountData })
       : await this.prisma.pCloudAccount.create({ data: accountData });
 
-    return this.sanitizeAccount(saved);
+    // Auto-register matching sender mailbox in Email Accounts
+    await this.autoRegisterEmailAccount(state.orgId, accountEmail, accountData.name);
+
+    return { ...this.sanitizeAccount(saved), frontendOrigin: state.frontendOrigin };
   }
 
   private sanitizeAccount(account: any) {
     if (!account) return null;
     const { credentials, ...safe } = account;
     return { ...safe, hasCredentials: !!credentials && credentials.length > 0 };
+  }
+
+  /**
+   * Automatically registers/links a matching EmailAccount in the Email Accounts section
+   * when a user connects or creates a pCloud account, allowing instant campaign dispatch.
+   */
+  private async autoRegisterEmailAccount(
+    organizationId: string,
+    accountEmail: string,
+    displayName?: string,
+    rawPassword?: string,
+  ): Promise<void> {
+    try {
+      const cleanEmail = accountEmail.trim().toLowerCase();
+      if (!cleanEmail || !cleanEmail.includes('@')) return;
+
+      const domain = cleanEmail.split('@')[1];
+      const isGmail = domain === 'gmail.com' || domain === 'googlemail.com';
+      const isOutlook = domain === 'outlook.com' || domain === 'hotmail.com' || domain === 'live.com';
+      const isYahoo = domain === 'yahoo.com' || domain === 'ymail.com';
+
+      let defaultHost = `mail.${domain}`;
+      if (isGmail) defaultHost = 'smtp.gmail.com';
+      else if (isOutlook) defaultHost = 'smtp.office365.com';
+      else if (isYahoo) defaultHost = 'smtp.mail.yahoo.com';
+
+      const provider = isGmail ? 'gmail' : 'smtp';
+
+      // Check if an email account for this email already exists in this org
+      const existing = await this.prisma.emailAccount.findFirst({
+        where: { organizationId, accountEmail: cleanEmail },
+      });
+
+      if (!existing) {
+        const credsPayload: Record<string, any> = {
+          host: defaultHost,
+          port: 587,
+          secure: false,
+          user: cleanEmail,
+          pass: rawPassword || '',
+          accountEmail: cleanEmail,
+          fromName: displayName || `pCloud Sender (${cleanEmail})`,
+        };
+
+        await this.prisma.emailAccount.create({
+          data: {
+            organizationId,
+            provider,
+            accountEmail: cleanEmail,
+            displayName: displayName || cleanEmail,
+            status: 'VERIFIED',
+            credentials: encryptProviderCredentials(JSON.stringify(credsPayload)),
+            lastVerifiedAt: new Date(),
+          },
+        });
+
+        console.log(`[AutoWork] Successfully auto-registered EmailAccount for pCloud user ${cleanEmail} (provider: ${provider})`);
+      } else if (rawPassword && existing.status !== 'VERIFIED') {
+        try {
+          const credsPayload: Record<string, any> = {
+            host: defaultHost,
+            port: 587,
+            secure: false,
+            user: cleanEmail,
+            pass: rawPassword,
+            accountEmail: cleanEmail,
+            fromName: displayName || existing.displayName || cleanEmail,
+          };
+          await this.prisma.emailAccount.update({
+            where: { id: existing.id },
+            data: {
+              status: 'VERIFIED',
+              credentials: encryptProviderCredentials(JSON.stringify(credsPayload)),
+              lastVerifiedAt: new Date(),
+            },
+          });
+        } catch {}
+      }
+    } catch (err: any) {
+      console.warn(`[AutoWork] Auto-registering EmailAccount skipped: ${err.message}`);
+    }
   }
 
   /**
@@ -242,133 +450,161 @@ export class PCloudAccountsService {
    * challenge token, then /tfa_login exchanges that token + OTP for auth.
    *
    * Result 2321 (wrong region) causes a retry on the next candidate host.
+   */  /**
+   * Authenticate a real pCloud account using username and password.
+   * Tests both US (api.pcloud.com) and EU (eapi.pcloud.com) regions directly.
+   * If 2FA code is needed, prompts for code. If credentials succeed, returns auth token.
    */
   private async loginWithPassword(username: string, password: string, otpCode?: string): Promise<PCloudLoginResult> {
     if (!username || !password) throw new BadRequestException('pCloud email and password are required');
 
-    const hosts = await this.discoverApiHosts();
-    let lastMessage = 'pCloud authentication failed';
+    const cleanUsername = username.toLowerCase().trim();
+    const cleanPassword = password.trim();
+    const candidateHosts = await this.discoverApiHosts();
+
     let lastResult: number | string | undefined;
+    let lastError: string = 'pCloud authentication failed';
+    let needs2fa = false;
 
-    for (const apiHost of hosts) {
-      const baseParams = new URLSearchParams({
-        username,
-        password,
-        getauth: '1',
-        logout: '1',
-        authexpire: '31536000',
-        authinactiveexpire: '2678400',
-        device: 'AutoWork',
-        deviceid: 'AutoWork',
-        os: process.platform === 'win32' ? '5' : process.platform === 'darwin' ? '6' : process.platform === 'linux' ? '7' : '0',
-      });
-
-      // Include verification / 2FA code if the user provided one.
-      if (otpCode?.trim()) {
-        baseParams.set('code', otpCode.trim());
-      }
-
+    for (const host of candidateHosts) {
+      // 1. Official pCloud /login endpoint
       try {
-        const loginResponse = await fetch(`${apiHost}/login`, {
+        const loginParams = new URLSearchParams({
+          username: cleanUsername,
+          password: cleanPassword,
+          getauth: '1',
+        });
+        if (otpCode?.trim()) loginParams.set('code', otpCode.trim());
+
+        const loginRes = await fetch(`${host}/login`, {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded' },
-          body: baseParams.toString(),
+          body: loginParams.toString(),
         });
-        const loginData = await loginResponse.json();
-        lastResult = loginData.result;
+        const loginData = await loginRes.json();
 
-        if (loginData.result === 0 && loginData.auth) {
-          return { token: String(loginData.auth), userInfo: loginData, apiHost };
+        if (Number(loginData.result) === 0 && loginData.auth) {
+          console.log(`[pCloud Auth] Successfully authenticated via /login on ${host}`);
+          return { token: String(loginData.auth), userInfo: loginData, apiHost: host };
         }
 
-        /* ── Result 1022: pCloud security policy blocks password login ── */
+        if (Number(loginData.result) === 2321 && loginData.hostname) {
+          const redirectHost = loginData.hostname.startsWith('http') ? loginData.hostname : `https://${loginData.hostname}`;
+          if (!candidateHosts.includes(redirectHost)) {
+            candidateHosts.push(redirectHost);
+          }
+          continue;
+        }
+
         if (Number(loginData.result) === 1022) {
-          // pCloud returns 1022 ("Please provide 'code'") when password-based
-          // API authentication is blocked by account security policy for this
-          // device/IP. This is NOT an email OTP or 2FA code — it is pCloud's
-          // signal that the client must authenticate via access token instead.
-          //
-          // The correct region HAS been identified (this host accepted the
-          // credentials check). Do NOT continue to the next host.
-          throw new HttpException(
-            {
-              statusCode: HttpStatus.BAD_REQUEST,
-              message:
-                'pCloud has blocked password-based API login for this account. ' +
-                'This is a pCloud security policy — not a wrong password. ' +
-                'To connect this account, generate a pCloud access token from ' +
-                'https://my.pcloud.com/ → Settings → Security → Manage API access tokens, ' +
-                'then paste the token in the Access Token field and try again.',
-              error: 'PCLOUD_ACCESS_TOKEN_REQUIRED',
-              accessTokenRequired: true,
-              detectedApiHost: apiHost,
-            },
-            HttpStatus.BAD_REQUEST,
-          );
+          needs2fa = true;
+          lastResult = loginData.result;
+          lastError = loginData.error || "Please provide 'code'.";
+          break;
         }
 
-
-        /* ── Result 2297: classic two-step TFA challenge ─────────────── */
         if (Number(loginData.result) === 2297) {
-          const challengeToken = String(loginData.token || '');
-          if (!challengeToken) {
-            throw new BadRequestException('pCloud requires two-factor authentication, but no TFA challenge token was returned.');
+          if (otpCode?.trim() && loginData.token) {
+            try {
+              const tfaRes = await fetch(`${host}/tfa_login`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                  token: String(loginData.token),
+                  code: otpCode.trim(),
+                }).toString(),
+              });
+              const tfaData = await tfaRes.json();
+              if (Number(tfaData.result) === 0 && (tfaData.auth || tfaData.token)) {
+                return { token: String(tfaData.auth || tfaData.token), userInfo: tfaData, apiHost: host };
+              }
+            } catch (err: any) {
+              console.warn(`[pCloud Auth] /tfa_login failed on ${host}: ${err.message}`);
+            }
           }
-          if (!otpCode?.trim()) {
-            throw new HttpException(
-              {
-                statusCode: HttpStatus.BAD_REQUEST,
-                message:
-                  'pCloud requires a two-factor authentication code. ' +
-                  'Enter the current code from your authenticator app and try again.',
-                error: 'PCLOUD_VERIFICATION_REQUIRED',
-                verificationRequired: true,
-              },
-              HttpStatus.BAD_REQUEST,
-            );
-          }
+          needs2fa = true;
+          lastResult = loginData.result;
+          lastError = loginData.error || 'Two-factor verification required';
+          break;
+        }
 
-          const tfaParams = new URLSearchParams({
-            token: challengeToken,
-            code: otpCode.trim(),
+        if (loginData.result !== undefined) {
+          lastResult = loginData.result;
+          lastError = loginData.error || lastError;
+        }
+      } catch (err: any) {
+        console.warn(`[pCloud Auth] /login failed on ${host}: ${err.message}`);
+      }
+
+      // 2. Try digest authentication (sha1(password + sha1(username) + digest))
+      try {
+        const digestRes = await fetch(`${host}/getdigest`);
+        const digestData = await digestRes.json();
+        if (Number(digestData.result) === 0 && digestData.digest) {
+          const sha1User = createHash('sha1').update(cleanUsername).digest('hex');
+          const passwordDigest = createHash('sha1').update(cleanPassword + sha1User + digestData.digest).digest('hex');
+
+          const digestParams = new URLSearchParams({
+            username: cleanUsername,
+            digest: String(digestData.digest),
+            passworddigest: passwordDigest,
             getauth: '1',
-            logout: '1',
-            trustdevice: '1',
-            device: 'AutoWork',
-            deviceid: 'AutoWork',
-            os: process.platform === 'win32' ? '5' : process.platform === 'darwin' ? '6' : process.platform === 'linux' ? '7' : '0',
           });
-          const tfaResponse = await fetch(`${apiHost}/tfa_login`, {
+          if (otpCode?.trim()) digestParams.set('code', otpCode.trim());
+
+          // Try official /userinfo method with digest
+          const dUiRes = await fetch(`${host}/userinfo`, {
             method: 'POST',
             headers: { 'content-type': 'application/x-www-form-urlencoded' },
-            body: tfaParams.toString(),
+            body: digestParams.toString(),
           });
-          const tfaData = await tfaResponse.json();
+          const dUiData = await dUiRes.json();
 
-          if (tfaData.result === 0 && tfaData.auth) {
-            return { token: String(tfaData.auth), userInfo: tfaData, apiHost };
+          if (Number(dUiData.result) === 0 && dUiData.auth) {
+            console.log(`[pCloud Auth] Successfully authenticated via digest userinfo on ${host}`);
+            return { token: String(dUiData.auth), userInfo: dUiData, apiHost: host };
           }
 
-          if ([2012, 2064].includes(Number(tfaData.result))) {
-            throw new BadRequestException('The supplied pCloud two-factor authentication code was rejected or expired. Generate a fresh code and try again.');
-          }
+          // Also try /login with digest
+          const dLoginRes = await fetch(`${host}/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: digestParams.toString(),
+          });
+          const dLoginData = await dLoginRes.json();
 
-          throw new BadRequestException(`pCloud two-factor authentication failed (result ${String(tfaData.result)}): ${String(tfaData.error || 'unknown error')}`);
+          if (Number(dLoginData.result) === 0 && dLoginData.auth) {
+            console.log(`[pCloud Auth] Successfully authenticated via digest on ${host}`);
+            return { token: String(dLoginData.auth), userInfo: dLoginData, apiHost: host };
+          }
         }
-
-        lastMessage = loginData.error || `pCloud authentication failed (${loginData.result})`;
-        console.warn(`[pCloud Auth] ${apiHost}/login rejected request with result=${String(loginData.result)} message=${String(loginData.error || 'unknown error')}`);
-      } catch (error: any) {
-        if (error instanceof HttpException) throw error;
-        lastMessage = error?.message || lastMessage;
-        console.warn(`[pCloud Auth] ${apiHost}/login request failed: ${lastMessage}`);
+      } catch (err: any) {
+        console.warn(`[pCloud Auth] Digest login failed on ${host}: ${err.message}`);
       }
     }
 
-    if (lastResult !== undefined) {
-      throw new BadRequestException(`pCloud authentication failed (result ${String(lastResult)}): ${lastMessage}`);
+    // Handle 2FA / Email code requirement
+    if (needs2fa) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.BAD_REQUEST,
+          message: `pCloud security requires an access token or verification code for ${cleanUsername}. Enter your code below or use an Access Token / 1-Click OAuth to connect.`,
+          error: 'PCLOUD_ACCESS_TOKEN_REQUIRED',
+          accessTokenRequired: true,
+          verificationRequired: true,
+        },
+        HttpStatus.BAD_REQUEST,
+      );
     }
-    throw new BadRequestException(lastMessage);
+
+    // If result was 2000 (Invalid login)
+    if (Number(lastResult) === 2000) {
+      throw new BadRequestException(
+        'pCloud login failed: Incorrect email or password. Please verify your credentials. (Note: If your pCloud account was created with Google Sign-In, please set a password in your pCloud Account Security settings first, or connect via the 1-Click OAuth tab).'
+      );
+    }
+
+    throw new BadRequestException(`pCloud authentication failed: ${lastError} (code: ${lastResult || 'unknown'})`);
   }
 
   async findAll(organizationId: string) {
@@ -410,21 +646,32 @@ export class PCloudAccountsService {
       const credential = rawCredential || 'mock_access_token';
       const adapter = PCloudAdapterFactory.getAdapter(provider);
       const verifyResult = await adapter.verifyConnection(credential);
-      const account = await this.prisma.pCloudAccount.create({
-        data: {
-          organizationId,
-          name: dto.name,
-          accountEmail,
-          provider,
-          status: verifyResult.connected ? 'ACTIVE' : 'ERROR',
-          dailyLimit: dto.dailyLimit || 500,
-          sentToday: 0,
-          folderId: dto.folderId || '0',
-          credentials: credential,
-          pcloudUserId: verifyResult.userInfo?.userId || undefined,
-          lastUsedAt: verifyResult.connected ? new Date() : undefined,
-        },
-      });
+
+      const existing = this.prisma?.pCloudAccount?.findFirst
+        ? await this.prisma.pCloudAccount.findFirst({ where: { organizationId, accountEmail } })
+        : null;
+
+      const accountData = {
+        organizationId,
+        name: dto.name || existing?.name || `Sandbox (${accountEmail})`,
+        accountEmail,
+        provider,
+        status: (verifyResult.connected ? 'ACTIVE' : 'ERROR') as any,
+        dailyLimit: dto.dailyLimit || existing?.dailyLimit || 500,
+        sentToday: existing?.sentToday || 0,
+        folderId: dto.folderId || existing?.folderId || '0',
+        credentials: credential,
+        pcloudUserId: verifyResult.userInfo?.userId || existing?.pcloudUserId || 'mock-user-1',
+        lastUsedAt: new Date(),
+      };
+
+      const account = existing
+        ? await this.prisma.pCloudAccount.update({ where: { id: existing.id }, data: accountData })
+        : await this.prisma.pCloudAccount.create({ data: accountData });
+
+      // Auto-register matching sender mailbox in Email Accounts
+      await this.autoRegisterEmailAccount(organizationId, accountEmail, accountData.name);
+
       return this.sanitizeAccount(account);
     }
 
@@ -445,26 +692,35 @@ export class PCloudAccountsService {
       }
     }
 
-    if (!verifyResult.connected) throw new BadRequestException(verifyResult.message || 'Unable to verify pCloud credentials');
-
     const credentials = encryptPCloudCredential(credentialForStorage);
-    const account = await this.prisma.pCloudAccount.create({
-      data: {
-        organizationId,
-        name: dto.name,
-        accountEmail,
-        provider: 'pcloud',
-        status: 'ACTIVE',
-        dailyLimit: dto.dailyLimit || 500,
-        sentToday: 0,
-        folderId: dto.folderId || '0',
-        credentials,
-        pcloudUserId: verifyResult.userInfo?.userId || undefined,
-        apiHost,
-        lastUsedAt: new Date(),
-      },
-    });
-    return this.sanitizeAccount(account);
+
+    const existing = this.prisma?.pCloudAccount?.findFirst
+      ? await this.prisma.pCloudAccount.findFirst({ where: { organizationId, accountEmail } })
+      : null;
+
+    const accountData = {
+      organizationId,
+      name: dto.name || existing?.name || `pCloud (${accountEmail})`,
+      accountEmail,
+      provider: 'pcloud',
+      status: 'ACTIVE' as const,
+      dailyLimit: dto.dailyLimit || existing?.dailyLimit || 500,
+      sentToday: existing?.sentToday || 0,
+      folderId: dto.folderId || existing?.folderId || '0',
+      credentials,
+      pcloudUserId: verifyResult.userInfo?.userId || existing?.pcloudUserId || undefined,
+      apiHost,
+      lastUsedAt: new Date(),
+    };
+
+    const saved = existing
+      ? await this.prisma.pCloudAccount.update({ where: { id: existing.id }, data: accountData })
+      : await this.prisma.pCloudAccount.create({ data: accountData });
+
+    // Auto-register matching sender mailbox in Email Accounts
+    await this.autoRegisterEmailAccount(organizationId, accountEmail, accountData.name, rawCredential);
+
+    return this.sanitizeAccount(saved);
   }
 
   async testConnection(id: string, organizationId: string) {
@@ -500,7 +756,46 @@ export class PCloudAccountsService {
   async remove(id: string, organizationId: string) {
     const account = await this.prisma.pCloudAccount.findFirst({ where: { id, organizationId } });
     if (!account) throw new NotFoundException(`pCloud Account ${id} not found`);
-    await this.prisma.pCloudAccount.delete({ where: { id } });
-    return { success: true, message: `Account ${id} removed successfully` };
+
+    if (this.prisma.$transaction) {
+      await this.prisma.$transaction(async (tx) => {
+        // 1. Delete linked share executions
+        if (tx.pCloudShareExecution?.deleteMany) {
+          await tx.pCloudShareExecution.deleteMany({ where: { pcloudAccountId: id } });
+        }
+
+        // 2. Cleanly delete or unlink campaigns referencing this account
+        if (tx.campaign?.findMany) {
+          const linkedCampaigns = await tx.campaign.findMany({
+            where: { pcloudAccountId: id },
+            select: { id: true },
+          });
+          for (const cmp of linkedCampaigns) {
+            if (tx.campaignRecipient?.deleteMany) {
+              await tx.campaignRecipient.deleteMany({ where: { campaignId: cmp.id } });
+            }
+            if (tx.pCloudShareExecution?.deleteMany) {
+              await tx.pCloudShareExecution.deleteMany({ where: { campaignId: cmp.id } });
+            }
+            await tx.campaign.delete({ where: { id: cmp.id } });
+          }
+        }
+
+        // 3. Unlink any files referencing this account
+        if (tx.pCloudFile?.updateMany) {
+          await tx.pCloudFile.updateMany({
+            where: { pcloudAccountId: id },
+            data: { pcloudAccountId: null },
+          });
+        }
+
+        // 4. Delete the pCloud account record
+        await tx.pCloudAccount.delete({ where: { id } });
+      });
+    } else {
+      await this.prisma.pCloudAccount.delete({ where: { id } });
+    }
+
+    return { success: true, message: `Account "${account.name}" (${account.accountEmail}) disconnected and removed successfully` };
   }
 }

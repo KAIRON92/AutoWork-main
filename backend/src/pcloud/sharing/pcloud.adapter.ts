@@ -69,8 +69,13 @@ export class PCloudRealAdapter implements IPCloudAdapter {
     return await this.client.shareFolder(options, accessToken, apiHost);
   }
 
-  async createTransfer(options: PCloudTransferOptions, accessToken: string, apiHost?: string): Promise<PCloudShareResult> {
-    return await this.client.uploadTransfer(options, accessToken, apiHost);
+  async createTransfer(
+    options: PCloudTransferOptions,
+    accessToken: string,
+    apiHost?: string,
+    preloadedFile?: { buffer: Buffer; name: string; mimeType: string }
+  ): Promise<PCloudShareResult> {
+    return await this.client.uploadTransfer(options, accessToken, apiHost, preloadedFile);
   }
 
   async deleteFile(fileId: string, accessToken: string, apiHost?: string): Promise<boolean> {

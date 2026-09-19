@@ -57,6 +57,17 @@ export class CampaignsController {
     return this.campaignsService.pause(id, currentOrgId(req));
   }
 
+  @Post(':id/recipients/:recipientId/retry')
+  @Roles('ADMIN', 'MEMBER')
+  @ApiOperation({ summary: 'Retry delivery for a specific campaign recipient' })
+  async retryRecipient(
+    @Param('id') id: string,
+    @Param('recipientId') recipientId: string,
+    @Request() req: any,
+  ) {
+    return this.campaignsService.retryRecipient(id, recipientId, currentOrgId(req));
+  }
+
   @Delete(':id')
   @Roles('ADMIN')
   @ApiOperation({ summary: 'Delete a campaign' })

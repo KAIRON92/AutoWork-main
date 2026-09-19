@@ -34,8 +34,17 @@ export const accountsService = {
     return true;
   },
 
-  async getOAuthUrl(): Promise<{ url: string }> {
-    const res = await apiClient.get('/v1/pcloud/accounts/oauth/url');
+  async getOAuthUrl(origin?: string): Promise<{ url: string; euUrl?: string }> {
+    const res = await apiClient.get('/v1/pcloud/accounts/oauth/url', { params: { origin } });
+    return res.data;
+  },
+
+  async exchangeOAuthCode(data: {
+    code: string;
+    name?: string;
+    dailyLimit?: number;
+  }): Promise<PCloudAccount> {
+    const res = await apiClient.post('/v1/pcloud/accounts/oauth/exchange', data);
     return res.data;
   },
 };

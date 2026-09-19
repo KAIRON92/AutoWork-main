@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { ConfigService } from '../config/config.service';
+import { getRedisConnectionOptions } from '../config/redis.config';
 
 @Injectable()
 export class JobsService implements OnModuleInit {
@@ -14,24 +15,27 @@ export class JobsService implements OnModuleInit {
   constructor(private configService: ConfigService) {}
 
   async onModuleInit() {
-    const connection = {
-      host: this.configService.get('redisHost') || 'localhost',
-      port: Number(this.configService.get('redisPort')) || 6379,
-    };
+    const connection = getRedisConnectionOptions();
 
     this.pcloudShareQueue = new Queue('pcloud-share-queue', { connection });
     this.emailDispatchQueue = new Queue('email-dispatch-queue', { connection });
     this.importQueue = new Queue('import-queue', { connection });
     this.campaignQueue = new Queue('campaign-queue', { connection });
 
-    await Promise.all([
-      this.pcloudShareQueue.waitUntilReady(),
-      this.emailDispatchQueue.waitUntilReady(),
-      this.importQueue.waitUntilReady(),
-      this.campaignQueue.waitUntilReady(),
-    ]);
-
-    this.logger.log('🚀 BullMQ queues connected to Redis (pcloud-share-queue, email-dispatch-queue, import-queue, campaign-queue)');
+    try {
+      await Promise.race([
+        Promise.all([
+          this.pcloudShareQueue.waitUntilReady(),
+          this.emailDispatchQueue.waitUntilReady(),
+          this.importQueue.waitUntilReady(),
+          this.campaignQueue.waitUntilReady(),
+        ]),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis connection timeout (3s)')), 3000)),
+      ]);
+      this.logger.log('🚀 BullMQ queues connected to Redis (pcloud-share-queue, email-dispatch-queue, import-queue, campaign-queue)');
+    } catch (err: any) {
+      this.logger.warn(`⚠️ BullMQ queue notice: Redis connection delayed or offline (${err?.message}). Queues will retry automatically in background.`);
+    }
   }
 
   async enqueuePCloudShareJob(data: any) {

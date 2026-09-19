@@ -272,7 +272,7 @@ export class MockPCloudAdapter implements IPCloudAdapter {
     return successResult;
   }
 
-  async createTransfer(options: PCloudTransferOptions, accessToken: string, apiHost?: string): Promise<PCloudShareResult> {
+  async createTransfer(options: PCloudTransferOptions, accessToken: string, apiHost?: string, preloadedFile?: { buffer: Buffer; name: string; mimeType: string }): Promise<PCloudShareResult> {
     await this.delay();
     const recipient = options.recipientEmails[0] || 'unknown@domain.com';
     const transferRef = `mock-transfer-hash-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;

@@ -44,7 +44,60 @@ export class EmailService {
   }
 
   private gmailConfigured() {
-    return Boolean(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REDIRECT_URI);
+    const id = process.env.GMAIL_CLIENT_ID?.trim();
+    const secret = process.env.GMAIL_CLIENT_SECRET?.trim();
+    const uri = process.env.GMAIL_REDIRECT_URI?.trim();
+    return Boolean(id && !id.includes('@') && secret && uri);
+  }
+
+  getGmailConfigStatus() {
+    const configured = this.gmailConfigured();
+    const clientId = process.env.GMAIL_CLIENT_ID ? `${process.env.GMAIL_CLIENT_ID.slice(0, 16)}...` : null;
+    return {
+      configured,
+      clientId,
+      redirectUri: process.env.GMAIL_REDIRECT_URI || 'http://localhost:4000/api/v1/email/accounts/gmail/callback',
+    };
+  }
+
+  async saveGmailConfig(clientId: string, clientSecret: string, redirectUri?: string) {
+    if (!clientId?.trim() || !clientSecret?.trim()) {
+      throw new BadRequestException('Google Client ID and Client Secret are required.');
+    }
+    const cleanId = clientId.trim();
+    if (cleanId.includes('@') || !cleanId.endsWith('.apps.googleusercontent.com')) {
+      throw new BadRequestException('Invalid Google Client ID. It must be a Google Cloud OAuth Client ID ending with .apps.googleusercontent.com (not an email address).');
+    }
+    process.env.GMAIL_CLIENT_ID = cleanId;
+    process.env.GMAIL_CLIENT_SECRET = clientSecret.trim();
+    if (redirectUri?.trim()) {
+      process.env.GMAIL_REDIRECT_URI = redirectUri.trim();
+    }
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const envPath = path.resolve(process.cwd(), '.env');
+      if (fs.existsSync(envPath)) {
+        let content = fs.readFileSync(envPath, 'utf8');
+        if (!content.includes('GMAIL_CLIENT_ID=')) {
+          content += `\nGMAIL_CLIENT_ID=${clientId.trim()}`;
+        } else {
+          content = content.replace(/^GMAIL_CLIENT_ID=.*$/m, `GMAIL_CLIENT_ID=${clientId.trim()}`);
+        }
+        if (!content.includes('GMAIL_CLIENT_SECRET=')) {
+          content += `\nGMAIL_CLIENT_SECRET=${clientSecret.trim()}`;
+        } else {
+          content = content.replace(/^GMAIL_CLIENT_SECRET=.*$/m, `GMAIL_CLIENT_SECRET=${clientSecret.trim()}`);
+        }
+        if (redirectUri?.trim()) {
+          content = content.replace(/^GMAIL_REDIRECT_URI=.*$/m, `GMAIL_REDIRECT_URI=${redirectUri.trim()}`);
+        }
+        fs.writeFileSync(envPath, content, 'utf8');
+      }
+    } catch (e: any) {
+      console.warn('Could not persist GMAIL OAuth credentials to .env:', e.message);
+    }
+    return { success: true, message: 'Google OAuth credentials saved and activated! 1-Click Sign-in is now live.' };
   }
 
   private microsoftConfigured() {
@@ -128,7 +181,7 @@ export class EmailService {
       redirect_uri: process.env.GMAIL_REDIRECT_URI!,
       response_type: 'code',
       access_type: 'offline',
-      prompt: 'consent',
+      prompt: 'select_account consent',
       scope: 'openid email profile https://www.googleapis.com/auth/gmail.send',
       state,
     });

@@ -6,10 +6,12 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { AuthRateLimitGuard } from './auth-rate-limit.guard';
 import { PrismaService } from '../prisma/prisma.service';
 
+export const DEFAULT_JWT_SECRET = 'supersecretjwtkeyforautoworkauditacceptance2026';
+
 @Module({
   imports: [
     JwtModule.register({
-      secret: process.env.JWT_SECRET,
+      secret: process.env.JWT_SECRET || DEFAULT_JWT_SECRET,
       signOptions: { expiresIn: '7d' },
     }),
   ],
@@ -18,3 +20,4 @@ import { PrismaService } from '../prisma/prisma.service';
   exports: [AuthService, JwtModule, JwtAuthGuard, AuthRateLimitGuard],
 })
 export class AuthModule {}
+

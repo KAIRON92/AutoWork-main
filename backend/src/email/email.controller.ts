@@ -46,6 +46,20 @@ export class EmailController {
     return this.emailService.createCustomSmtp(orgId, body);
   }
 
+  @Get('gmail/status')
+  @Roles('ADMIN', 'MEMBER')
+  @ApiOperation({ summary: 'Get Gmail OAuth configuration status' })
+  async getGmailStatus() {
+    return this.emailService.getGmailConfigStatus();
+  }
+
+  @Post('gmail/config')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: 'Configure Google OAuth credentials for 1-Click Sign-In' })
+  async configureGmail(@Body() body: { clientId: string; clientSecret: string; redirectUri?: string }) {
+    return this.emailService.saveGmailConfig(body.clientId, body.clientSecret, body.redirectUri);
+  }
+
   @Get('gmail/oauth-url')
   @Roles('ADMIN', 'MEMBER')
   @ApiOperation({ summary: 'Create an official Gmail OAuth authorization URL' })

@@ -1,22 +1,29 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 15000,
+  timeout: 20000,
   withCredentials: true,
 });
 
 apiClient.interceptors.request.use(
   (config) => {
-    // Migrate away from the old browser-readable JWT storage immediately.
-    if (typeof window !== 'undefined') localStorage.removeItem('autowork_jwt_token');
-    // Authentication is cookie-based. Never put pCloud credentials, passwords,
-    // or JWTs into request URLs or application logs.
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('autowork_jwt_token');
+      if (token) {
+        if (config.headers && typeof (config.headers as any).set === 'function') {
+          (config.headers as any).set('Authorization', `Bearer ${token}`);
+        } else {
+          config.headers = config.headers || {};
+          config.headers['Authorization'] = `Bearer ${token}`;
+        }
+      }
+    }
     return config;
   },
   (error) => Promise.reject(error),

@@ -42,6 +42,16 @@ export const emailAccountsService = {
     return response.data;
   },
 
+  async getGmailStatus(): Promise<{ configured: boolean; clientId: string | null; redirectUri: string }> {
+    const response = await apiClient.get('/v1/email/accounts/gmail/status');
+    return response.data;
+  },
+
+  async saveGmailConfig(clientId: string, clientSecret: string, redirectUri?: string): Promise<{ success: boolean; message: string }> {
+    const response = await apiClient.post('/v1/email/accounts/gmail/config', { clientId, clientSecret, redirectUri });
+    return response.data;
+  },
+
   async remove(id: string) {
     const response = await apiClient.delete(`/v1/email/accounts/${id}`);
     return response.data;

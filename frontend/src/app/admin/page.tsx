@@ -2,10 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { Shell } from '@/components/layout/shell';
-import axios from 'axios';
+import { apiClient } from '@/services/apiClient';
 import { Server, Database, Cloud, Zap, RefreshCw, AlertTriangle } from 'lucide-react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
 export default function AdminPage() {
   const [health, setHealth] = useState<any>(null);
@@ -16,7 +14,7 @@ export default function AdminPage() {
     try {
       setLoading(true);
       setError('');
-      const res = await axios.get(`${API_BASE}/health`);
+      const res = await apiClient.get('/health');
       setHealth(res.data);
     } catch (err: any) {
       setHealth(null);
