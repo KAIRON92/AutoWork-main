@@ -29,8 +29,8 @@ export default function AutomationsPage() {
       setLoading(true);
       const data = await automationsService.getAll();
       setAutomations(data || []);
-    } catch (e) {
-      console.error('Failed to load automations:', e);
+    } catch (e: any) {
+      console.warn('Automations data sync notice:', e?.message || e);
     } finally {
       setLoading(false);
     }

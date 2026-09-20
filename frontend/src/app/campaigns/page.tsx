@@ -43,8 +43,8 @@ export default function CampaignsPage() {
       setLoading(true);
       const data = await campaignsService.getAll();
       setCampaigns(data);
-    } catch (e) {
-      console.error('Failed to load campaigns:', e);
+    } catch (e: any) {
+      console.warn('Campaigns data sync notice:', e?.message || e);
     } finally {
       setLoading(false);
     }

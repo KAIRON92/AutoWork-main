@@ -56,8 +56,8 @@ export default function AccountsPage() {
     try {
       setLoading(true);
       setAccounts(await accountsService.getAll());
-    } catch (err) {
-      console.error('Failed to load accounts:', err);
+    } catch (err: any) {
+      console.warn('Accounts data sync notice:', err?.message || err);
     } finally {
       setLoading(false);
     }

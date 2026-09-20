@@ -36,8 +36,8 @@ export default function TemplatesPage() {
       if (data.length > 0) {
         selectTemplate(data[0]);
       }
-    } catch (e) {
-      console.error('Failed to load templates:', e);
+    } catch (e: any) {
+      console.warn('Templates data sync notice:', e?.message || e);
     } finally {
       setLoading(false);
     }

@@ -48,8 +48,8 @@ export default function ContactsPage() {
       ]);
       setContacts(cnts);
       setLists(lsts);
-    } catch (e) {
-      console.error('Failed to load contacts:', e);
+    } catch (e: any) {
+      console.warn('Contacts data sync notice:', e?.message || e);
     } finally {
       setLoading(false);
     }

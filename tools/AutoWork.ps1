@@ -382,6 +382,18 @@ function Start-Infra($ports) {
 
 function Stop-RunningProcesses {
   Say 'Releasing any existing process locks on application ports...'
+  $portsToFree = @(3000, 4000, 4001)
+  foreach ($port in $portsToFree) {
+    try {
+      Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+        $pidToKill = $_.OwningProcess
+        if ($pidToKill -gt 4) {
+          & taskkill.exe /F /PID $pidToKill /T *> $null
+        }
+      }
+    } catch { }
+  }
+
   try {
     Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
       try {
@@ -391,17 +403,9 @@ function Stop-RunningProcesses {
           $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
           if ($cim) { $cmd = $cim.CommandLine }
         } catch { }
-        if ($cmd -and ($cmd -like "*$RepoRoot*" -or $cmd -like "*autowork*")) {
-          Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        if ($cmd -and ($cmd -like "*autowork*" -or $cmd -like "*$RepoRoot*")) {
+          & taskkill.exe /F /PID $procId /T *> $null
         }
-      } catch { }
-    }
-  } catch { }
-
-  try {
-    Get-NetTCPConnection -LocalPort 3000, 4000, 4001 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-      try {
-        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
       } catch { }
     }
   } catch { }
@@ -471,7 +475,6 @@ function Stop-Project {
 function Start-Terminals {
   Stop-RunningProcesses
 
-  $safePath = $env:Path.Replace("'", "''")
   $jobs = @(
     @{Title='AutoWork Backend API'; Dir=$BackendDir; Cmd='npm run start:dev'},
     @{Title='AutoWork Frontend App'; Dir=$FrontendDir; Cmd='npm run dev'},
@@ -480,8 +483,7 @@ function Start-Terminals {
     @{Title='AutoWork Email Worker'; Dir=$RepoRoot; Cmd='npm run worker:email'}
   )
   foreach ($job in $jobs) {
-    $command = "`$env:Path = '$safePath'; Set-Location -LiteralPath '$($job.Dir)'; `$Host.UI.RawUI.WindowTitle='$($job.Title)'; $($job.Cmd)"
-    Start-Process powershell.exe -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-Command', $command | Out-Null
+    Start-Process -FilePath "cmd.exe" -WorkingDirectory $job.Dir -ArgumentList "/k", "title $($job.Title) && $($job.Cmd)" | Out-Null
   }
   Ok 'All services (Backend, Frontend, and 3 Background Workers) launched in individual consoles.'
 }
@@ -490,7 +492,7 @@ function Wait-And-OpenBrowser {
   Write-Host -NoNewline "[AutoWork] Waiting for Backend API and Frontend App to initialize " -ForegroundColor Cyan
   $backendReady = $false
   $frontendReady = $false
-  for ($i = 0; $i -lt 45; $i++) {
+  for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 1
     if (-not $backendReady) {
       try {
@@ -516,10 +518,15 @@ function Wait-And-OpenBrowser {
   Write-Host ""
 
   if (-not $backendReady) {
-    Warn "Backend API is still warming up in its dedicated terminal. It will be online in a few moments."
+    Warn "Backend API is taking longer than usual to compile. Please check the 'AutoWork Backend API' console window."
+  } else {
+    Ok "Backend API is healthy and active on http://localhost:4000."
   }
+
   if (-not $frontendReady) {
-    Warn "Frontend App is compiling in its dedicated terminal."
+    Warn "Frontend App is compiling. Please check the 'AutoWork Frontend App' console window."
+  } else {
+    Ok "Frontend App is healthy and active on http://localhost:3000."
   }
 
   Say '🚀 AutoWork is LIVE!'

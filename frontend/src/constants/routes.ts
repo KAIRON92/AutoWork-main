@@ -6,6 +6,8 @@ export const ROUTES = {
   RESET_PASSWORD: '/reset-password',
   DASHBOARD: '/dashboard',
   ACCOUNTS: '/accounts',
+  EMAIL_ACCOUNTS: '/email-accounts',
+  FILES: '/files',
   CONTACTS: '/contacts',
   IMPORTS: '/imports',
   TEMPLATES: '/templates',
