@@ -211,10 +211,11 @@ function Resolve-ServicePorts {
   $existingPgContainer = $false
   $existingRedisContainer = $false
   if (Has 'docker') {
-    $pgState = & docker inspect -f '{{.State.Running}}' autowork-postgres 2>$null
-    if ($pgState -eq 'true') { $existingPgContainer = $true }
-    $redisState = & docker inspect -f '{{.State.Running}}' autowork-redis 2>$null
-    if ($redisState -eq 'true') { $existingRedisContainer = $true }
+    try {
+      $running = @(& docker ps --format "{{.Names}}" 2>$null)
+      if ($running -contains 'autowork-postgres') { $existingPgContainer = $true }
+      if ($running -contains 'autowork-redis') { $existingRedisContainer = $true }
+    } catch { }
   }
 
   $pgPort = 5432
