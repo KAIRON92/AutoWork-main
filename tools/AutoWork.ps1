@@ -20,16 +20,20 @@ function Warn($m) { Write-Host "[WARN] $m" -ForegroundColor Yellow }
 function Fail($m) { throw "[AutoWork] $m" }
 function Has($name) { return $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 
+function Safe-DirExists([string]$p) {
+  if ([string]::IsNullOrWhiteSpace($p)) { return $false }
+  try {
+    return [System.IO.Directory]::Exists($p)
+  } catch {
+    return $false
+  }
+}
+
 function Refresh-SessionPath {
   $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $combined = @($env:Path -split ';')
 
-  foreach ($p in ($machinePath -split ';' + $userPath -split ';')) {
-    if ($p -and (Test-Path $p) -and ($combined -notcontains $p)) {
-      $combined += $p
-    }
-  }
+  $paths = [System.Collections.Generic.List[string]]::new()
 
   $candidates = @(
     'C:\Program Files\nodejs',
@@ -46,12 +50,36 @@ function Refresh-SessionPath {
   )
 
   foreach ($c in $candidates) {
-    if ((Test-Path $c) -and ($combined -notcontains $c)) {
-      $combined = @($c) + $combined
+    if ((Safe-DirExists $c) -and (-not $paths.Contains($c))) {
+      $paths.Add($c)
     }
   }
 
-  $env:Path = ($combined | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique) -join ';'
+  if ($env:Path) {
+    foreach ($p in $env:Path.Split(';')) {
+      if ((Safe-DirExists $p) -and (-not $paths.Contains($p))) {
+        $paths.Add($p)
+      }
+    }
+  }
+
+  if ($machinePath) {
+    foreach ($p in $machinePath.Split(';')) {
+      if ((Safe-DirExists $p) -and (-not $paths.Contains($p))) {
+        $paths.Add($p)
+      }
+    }
+  }
+
+  if ($userPath) {
+    foreach ($p in $userPath.Split(';')) {
+      if ((Safe-DirExists $p) -and (-not $paths.Contains($p))) {
+        $paths.Add($p)
+      }
+    }
+  }
+
+  $env:Path = ($paths -join ';')
 }
 
 function Install-WithWinget($id, $label) {
@@ -307,17 +335,29 @@ function Start-Infra($ports) {
 
 function Stop-RunningProcesses {
   Say 'Releasing any existing process locks on application ports...'
-  Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
-    try {
-      $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
-      if ($cmd -and ($cmd -like "*$RepoRoot*" -or $cmd -like "*autowork*")) {
-        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-      }
-    } catch { }
-  }
-  Get-NetTCPConnection -LocalPort 3000, 4000, 4001 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-    Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
-  }
+  try {
+    Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
+      try {
+        $procId = $_.Id
+        $cmd = $null
+        try {
+          $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+          if ($cim) { $cmd = $cim.CommandLine }
+        } catch { }
+        if ($cmd -and ($cmd -like "*$RepoRoot*" -or $cmd -like "*autowork*")) {
+          Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        }
+      } catch { }
+    }
+  } catch { }
+
+  try {
+    Get-NetTCPConnection -LocalPort 3000, 4000, 4001 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+      try {
+        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+      } catch { }
+    }
+  } catch { }
   Start-Sleep -Milliseconds 600
 }
 
