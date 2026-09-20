@@ -468,7 +468,7 @@ function Start-Terminals {
     @{Title='AutoWork Email Worker'; Dir=$RepoRoot; Cmd='npm run worker:email'}
   )
   foreach ($job in $jobs) {
-    Start-Process -FilePath "cmd.exe" -WorkingDirectory $job.Dir -ArgumentList "/k", "title $($job.Title) && $($job.Cmd)" | Out-Null
+    Start-Process -FilePath "cmd.exe" -WorkingDirectory $job.Dir -ArgumentList "/k", "title $($job.Title) && set ""PATH=$($env:Path)"" && $($job.Cmd)" | Out-Null
   }
   Ok 'All services (Backend, Frontend, and 3 Background Workers) launched in individual consoles.'
 }
@@ -477,7 +477,7 @@ function Wait-And-OpenBrowser {
   Write-Host -NoNewline "[AutoWork] Waiting for Backend API and Frontend App to initialize " -ForegroundColor Cyan
   $backendReady = $false
   $frontendReady = $false
-  for ($i = 0; $i -lt 60; $i++) {
+  for ($i = 0; $i -lt 90; $i++) {
     Start-Sleep -Seconds 1
     if (-not $backendReady) {
       try {

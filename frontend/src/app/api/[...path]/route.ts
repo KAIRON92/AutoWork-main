@@ -57,7 +57,7 @@ async function handleProxy(request: NextRequest, params: { path: string[] }) {
   const incomingProto = request.headers.get('x-forwarded-proto') || request.nextUrl.protocol.replace(':', '');
   headers.set('x-forwarded-host', incomingHost);
   headers.set('x-forwarded-proto', incomingProto);
-  headers.set('host', '127.0.0.1:4000');
+  headers.delete('host');
 
   let body: BodyInit | undefined = undefined;
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -71,11 +71,8 @@ async function handleProxy(request: NextRequest, params: { path: string[] }) {
   const urlsToTry = [targetUrl, `http://localhost:4000/api/${path}${search}`];
 
   for (const url of urlsToTry) {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        if (url.includes('localhost:4000')) {
-          headers.set('host', 'localhost:4000');
-        }
         res = await fetch(url, {
           method: request.method,
           headers,
