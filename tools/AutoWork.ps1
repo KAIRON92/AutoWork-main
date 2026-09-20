@@ -4,7 +4,10 @@ param(
   [string]$Action = 'run'
 )
 
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
+if (Test-Path Variable:PSNativeCommandUseErrorActionPreference) {
+  $PSNativeCommandUseErrorActionPreference = $false
+}
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $RepoRoot
 $ComposeFile = Join-Path $RepoRoot 'docker/docker-compose.yml'
@@ -338,26 +341,20 @@ function Start-Infra($ports) {
     Invoke-Compose @('rm', '-f', '-s', 'postgres', 'redis') *> $null
   } catch { }
 
-  $upOutput = Invoke-Compose @('up', '-d', 'postgres', 'redis') 2>&1 | Out-String
-  Write-Host $upOutput
+  Invoke-Compose @('up', '-d', 'postgres', 'redis')
 
   # If any port is still reported as allocated by Docker daemon, dynamically allocate fallback and retry
-  if ($LASTEXITCODE -ne 0 -or $upOutput -match "port is already allocated|address already in use") {
-    Warn "Docker port conflict detected. Auto-assigning alternate collision-free ports..."
-    if ($upOutput -match "6379|6380|redis") {
-      $ports.RedisPort = Get-FreePort ($ports.RedisPort + 1)
-      $env:REDIS_HOST_PORT = "$($ports.RedisPort)"
-      Warn "Re-routed Redis to port $($ports.RedisPort)."
-    }
-    if ($upOutput -match "5432|5433|postgres") {
-      $ports.PgPort = Get-FreePort ($ports.PgPort + 1)
-      $env:POSTGRES_HOST_PORT = "$($ports.PgPort)"
-      Warn "Re-routed PostgreSQL to port $($ports.PgPort)."
-    }
+  if ($LASTEXITCODE -ne 0) {
+    Warn "Docker container launch hit a conflict. Auto-assigning alternate collision-free ports..."
+    $ports.RedisPort = Get-FreePort ($ports.RedisPort + 1)
+    $ports.PgPort = Get-FreePort ($ports.PgPort + 1)
+    $env:REDIS_HOST_PORT = "$($ports.RedisPort)"
+    $env:POSTGRES_HOST_PORT = "$($ports.PgPort)"
     Ensure-Env $ports
-    Invoke-Compose @('rm', '-f', '-s', 'postgres', 'redis') *> $null
-    $retryOutput = Invoke-Compose @('up', '-d', 'postgres', 'redis') 2>&1 | Out-String
-    Write-Host $retryOutput
+    try {
+      Invoke-Compose @('rm', '-f', '-s', 'postgres', 'redis') *> $null
+    } catch { }
+    Invoke-Compose @('up', '-d', 'postgres', 'redis')
     if ($LASTEXITCODE -ne 0) {
       Fail "Failed to start infrastructure containers after port adjustment."
     }
@@ -438,32 +435,24 @@ function Prepare-Database($ports) {
     }
 
     # Execute migration with automatic self-healing for P1000 or drift
-    $migrationOutput = & npm run prisma:migrate:deploy 2>&1 | Out-String
-    Write-Host $migrationOutput
+    & npm run prisma:migrate:deploy
 
-    if ($LASTEXITCODE -ne 0 -or $migrationOutput -match "P1000|Authentication failed") {
-      if ($migrationOutput -match "P1000|Authentication failed") {
-        Warn "Database authentication mismatch detected (stale volume credentials). Auto-healing database volume..."
-        Invoke-Compose @('down', '-v', 'postgres') *> $null
-        Invoke-Compose @('up', '-d', 'postgres') *> $null
-        Say "Waiting for freshly created PostgreSQL container..."
-        for ($i = 0; $i -lt 30; $i++) {
-          Start-Sleep -Seconds 1
-          Invoke-Compose @('exec', '-T', 'postgres', 'pg_isready', '-U', 'autowork', '-d', 'autowork_db') *> $null
-          if ($LASTEXITCODE -eq 0) { break }
-        }
-        Say "Retrying migration on auto-healed database..."
-        $retryOutput = & npm run prisma:migrate:deploy 2>&1 | Out-String
-        Write-Host $retryOutput
-        if ($LASTEXITCODE -ne 0) {
-          Say "Applying schema via prisma db push fallback..."
-          & npm run prisma:push -- --accept-data-loss
-          if ($LASTEXITCODE -ne 0) { Fail 'Database synchronization failed after volume recovery.' }
-        }
-      } else {
+    if ($LASTEXITCODE -ne 0) {
+      Warn "Database migration deploy encountered an error. Auto-healing database volume..."
+      Invoke-Compose @('down', '-v', 'postgres') *> $null
+      Invoke-Compose @('up', '-d', 'postgres') *> $null
+      Say "Waiting for freshly created PostgreSQL container..."
+      for ($i = 0; $i -lt 30; $i++) {
+        Start-Sleep -Seconds 1
+        Invoke-Compose @('exec', '-T', 'postgres', 'pg_isready', '-U', 'autowork', '-d', 'autowork_db') *> $null
+        if ($LASTEXITCODE -eq 0) { break }
+      }
+      Say "Retrying migration on auto-healed database..."
+      & npm run prisma:migrate:deploy
+      if ($LASTEXITCODE -ne 0) {
         Say "Applying schema via prisma db push fallback..."
         & npm run prisma:push -- --accept-data-loss
-        if ($LASTEXITCODE -ne 0) { Fail 'Database migration failed. Check PostgreSQL and backend/.env.' }
+        if ($LASTEXITCODE -ne 0) { Fail 'Database synchronization failed after volume recovery.' }
       }
     }
   } finally { Pop-Location }
