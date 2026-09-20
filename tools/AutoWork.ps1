@@ -298,9 +298,9 @@ function Ensure-Env($ports) {
   }
 
   $existing = Get-Content $BackendEnv -Raw
-  $jwt = [Convert]::ToBase64String((1..48 | ForEach-Object { [byte](Get-Random -Minimum 0 -Maximum 256) }))
-  $enc = [Convert]::ToBase64String((1..32 | ForEach-Object { [byte](Get-Random -Minimum 0 -Maximum 256) }))
-  $emailEnc = [Convert]::ToBase64String((1..32 | ForEach-Object { [byte](Get-Random -Minimum 0 -Maximum 256) }))
+  $jwt = [System.Guid]::NewGuid().ToString('N') + [System.Guid]::NewGuid().ToString('N')
+  $enc = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(([System.Guid]::NewGuid().ToString('N'))))
+  $emailEnc = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(([System.Guid]::NewGuid().ToString('N'))))
   if ($existing -match '<long-random-secret>|JWT_SECRET=replace') { Set-EnvKey $BackendEnv 'JWT_SECRET' $jwt }
   if ($existing -match 'REFRESH_TOKEN_SECRET=<long-random-secret>|REFRESH_TOKEN_SECRET=replace') { Set-EnvKey $BackendEnv 'REFRESH_TOKEN_SECRET' $jwt }
   if ($existing -match 'PCLOUD_CREDENTIAL_ENCRYPTION_KEY=replace-with-base64-32-byte-key') { Set-EnvKey $BackendEnv 'PCLOUD_CREDENTIAL_ENCRYPTION_KEY' $enc }
@@ -394,21 +394,6 @@ function Stop-RunningProcesses {
     } catch { }
   }
 
-  try {
-    Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
-      try {
-        $procId = $_.Id
-        $cmd = $null
-        try {
-          $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
-          if ($cim) { $cmd = $cim.CommandLine }
-        } catch { }
-        if ($cmd -and ($cmd -like "*autowork*" -or $cmd -like "*$RepoRoot*")) {
-          & taskkill.exe /F /PID $procId /T *> $null
-        }
-      } catch { }
-    }
-  } catch { }
   Start-Sleep -Milliseconds 600
 }
 
