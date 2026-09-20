@@ -245,6 +245,11 @@ function Resolve-ServicePorts {
   return @{ PgPort = $pgPort; RedisPort = $redisPort }
 }
 
+function Invoke-Compose($arguments) {
+  $cmd = @('compose', '--project-directory', $RepoRoot, '--env-file', $RootEnv, '-f', $ComposeFile) + $arguments
+  & docker $cmd
+}
+
 function Ensure-Env($ports) {
   Say "Configuring environment configuration files..."
   if (-not (Test-Path $EnvExample)) { Fail '.env.example is missing.' }
@@ -257,11 +262,24 @@ function Ensure-Env($ports) {
   $pgPort = $ports.PgPort
   $redisPort = $ports.RedisPort
 
+  # Export directly to process environment so subprocesses (Docker Compose, node, etc.) inherit immediately
+  $env:POSTGRES_USER = 'autowork'
+  $env:POSTGRES_PASSWORD = 'autoworkpass'
+  $env:POSTGRES_DB = 'autowork_db'
+  $env:POSTGRES_HOST_PORT = "$pgPort"
+  $env:REDIS_HOST_PORT = "$redisPort"
+  $env:DATABASE_URL = "postgresql://autowork:autoworkpass@localhost:$pgPort/autowork_db?schema=public"
+  $env:REDIS_HOST = 'localhost'
+  $env:REDIS_PORT = "$redisPort"
+
   Set-EnvKey $RootEnv 'POSTGRES_USER' 'autowork'
   Set-EnvKey $RootEnv 'POSTGRES_PASSWORD' 'autoworkpass'
   Set-EnvKey $RootEnv 'POSTGRES_DB' 'autowork_db'
   Set-EnvKey $RootEnv 'POSTGRES_HOST_PORT' $pgPort
   Set-EnvKey $RootEnv 'REDIS_HOST_PORT' $redisPort
+  Set-EnvKey $RootEnv 'DATABASE_URL' "postgresql://autowork:autoworkpass@localhost:$pgPort/autowork_db?schema=public"
+  Set-EnvKey $RootEnv 'REDIS_HOST' 'localhost'
+  Set-EnvKey $RootEnv 'REDIS_PORT' $redisPort
 
   Set-EnvKey $BackendEnv 'POSTGRES_USER' 'autowork'
   Set-EnvKey $BackendEnv 'POSTGRES_PASSWORD' 'autoworkpass'
@@ -270,9 +288,11 @@ function Ensure-Env($ports) {
   Set-EnvKey $BackendEnv 'REDIS_HOST' 'localhost'
   Set-EnvKey $BackendEnv 'REDIS_PORT' $redisPort
 
-  Set-EnvKey $RootEnv 'DATABASE_URL' "postgresql://autowork:autoworkpass@localhost:$pgPort/autowork_db?schema=public"
-  Set-EnvKey $RootEnv 'REDIS_HOST' 'localhost'
-  Set-EnvKey $RootEnv 'REDIS_PORT' $redisPort
+  # Sync to docker/.env so docker compose inside docker directory inherits it natively
+  $dockerDir = Join-Path $RepoRoot 'docker'
+  if (Test-Path $dockerDir) {
+    Copy-Item $RootEnv (Join-Path $dockerDir '.env') -Force -ErrorAction SilentlyContinue
+  }
 
   $existing = Get-Content $BackendEnv -Raw
   $jwt = [Convert]::ToBase64String((1..48 | ForEach-Object { [byte](Get-Random -Minimum 0 -Maximum 256) }))
@@ -308,17 +328,46 @@ function Prepare-Dependencies {
 }
 
 function Start-Infra($ports) {
+  $env:POSTGRES_HOST_PORT = "$($ports.PgPort)"
+  $env:REDIS_HOST_PORT = "$($ports.RedisPort)"
+
   Say "Starting isolated PostgreSQL (port $($ports.PgPort)) and Redis (port $($ports.RedisPort)) containers..."
-  & docker compose -f $ComposeFile up -d postgres redis
-  if ($LASTEXITCODE -ne 0) {
-    Fail 'PostgreSQL/Redis failed to start. Run: docker compose -f docker/docker-compose.yml logs postgres redis'
+
+  # Stop and remove any prior conflicting autowork containers
+  try {
+    Invoke-Compose @('rm', '-f', '-s', 'postgres', 'redis') *> $null
+  } catch { }
+
+  $upOutput = Invoke-Compose @('up', '-d', 'postgres', 'redis') 2>&1 | Out-String
+  Write-Host $upOutput
+
+  # If any port is still reported as allocated by Docker daemon, dynamically allocate fallback and retry
+  if ($LASTEXITCODE -ne 0 -or $upOutput -match "port is already allocated|address already in use") {
+    Warn "Docker port conflict detected. Auto-assigning alternate collision-free ports..."
+    if ($upOutput -match "6379|6380|redis") {
+      $ports.RedisPort = Get-FreePort ($ports.RedisPort + 1)
+      $env:REDIS_HOST_PORT = "$($ports.RedisPort)"
+      Warn "Re-routed Redis to port $($ports.RedisPort)."
+    }
+    if ($upOutput -match "5432|5433|postgres") {
+      $ports.PgPort = Get-FreePort ($ports.PgPort + 1)
+      $env:POSTGRES_HOST_PORT = "$($ports.PgPort)"
+      Warn "Re-routed PostgreSQL to port $($ports.PgPort)."
+    }
+    Ensure-Env $ports
+    Invoke-Compose @('rm', '-f', '-s', 'postgres', 'redis') *> $null
+    $retryOutput = Invoke-Compose @('up', '-d', 'postgres', 'redis') 2>&1 | Out-String
+    Write-Host $retryOutput
+    if ($LASTEXITCODE -ne 0) {
+      Fail "Failed to start infrastructure containers after port adjustment."
+    }
   }
 
   Write-Host -NoNewline "[AutoWork] Waiting for PostgreSQL container to complete initialization " -ForegroundColor Cyan
   $pgReady = $false
   for ($i = 0; $i -lt 45; $i++) {
     Start-Sleep -Seconds 1
-    & docker compose -f $ComposeFile exec -T postgres pg_isready -U autowork -d autowork_db *> $null
+    Invoke-Compose @('exec', '-T', 'postgres', 'pg_isready', '-U', 'autowork', '-d', 'autowork_db') *> $null
     if ($LASTEXITCODE -eq 0) {
       $pgReady = $true
       break
@@ -395,12 +444,12 @@ function Prepare-Database($ports) {
     if ($LASTEXITCODE -ne 0 -or $migrationOutput -match "P1000|Authentication failed") {
       if ($migrationOutput -match "P1000|Authentication failed") {
         Warn "Database authentication mismatch detected (stale volume credentials). Auto-healing database volume..."
-        & docker compose -f $ComposeFile down -v postgres
-        & docker compose -f $ComposeFile up -d postgres
+        Invoke-Compose @('down', '-v', 'postgres') *> $null
+        Invoke-Compose @('up', '-d', 'postgres') *> $null
         Say "Waiting for freshly created PostgreSQL container..."
         for ($i = 0; $i -lt 30; $i++) {
           Start-Sleep -Seconds 1
-          & docker compose -f $ComposeFile exec -T postgres pg_isready -U autowork -d autowork_db *> $null
+          Invoke-Compose @('exec', '-T', 'postgres', 'pg_isready', '-U', 'autowork', '-d', 'autowork_db') *> $null
           if ($LASTEXITCODE -eq 0) { break }
         }
         Say "Retrying migration on auto-healed database..."
@@ -425,7 +474,7 @@ function Stop-Project {
   Say 'Stopping existing AutoWork processes and containers...'
   Stop-RunningProcesses
   if (Has 'docker') {
-    & docker compose -f $ComposeFile down *> $null
+    Invoke-Compose @('down') *> $null
   }
   Ok 'AutoWork stopped.'
 }
@@ -533,7 +582,7 @@ function Diagnose {
   if (Has 'docker') {
     Write-Host "Docker:  $(& docker --version)"
     Write-Host "Compose: $(& docker compose version)"
-    & docker compose -f $ComposeFile ps
+    Invoke-Compose @('ps')
   }
   $ports = Resolve-ServicePorts
   Write-Host "Active DB Port: $($ports.PgPort)"
