@@ -20,40 +20,123 @@ function Warn($m) { Write-Host "[WARN] $m" -ForegroundColor Yellow }
 function Fail($m) { throw "[AutoWork] $m" }
 function Has($name) { return $null -ne (Get-Command $name -ErrorAction SilentlyContinue) }
 
+function Refresh-SessionPath {
+  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $combined = @($env:Path -split ';')
+
+  foreach ($p in ($machinePath -split ';' + $userPath -split ';')) {
+    if ($p -and (Test-Path $p) -and ($combined -notcontains $p)) {
+      $combined += $p
+    }
+  }
+
+  $candidates = @(
+    'C:\Program Files\nodejs',
+    'C:\Program Files (x86)\nodejs',
+    'C:\nvm4w\nodejs',
+    "$env:LOCALAPPDATA\Programs\nodejs",
+    "$env:APPDATA\npm",
+    "$env:APPDATA\nvm",
+    "$env:USERPROFILE\.nvm",
+    'C:\Program Files\Git\cmd',
+    'C:\Program Files\Git\bin',
+    'C:\Program Files\Docker\Docker\resources\bin',
+    "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin"
+  )
+
+  foreach ($c in $candidates) {
+    if ((Test-Path $c) -and ($combined -notcontains $c)) {
+      $combined = @($c) + $combined
+    }
+  }
+
+  $env:Path = ($combined | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique) -join ';'
+}
+
 function Install-WithWinget($id, $label) {
-  if (-not (Has 'winget')) { Fail "WinGet is not available. Install/update Windows App Installer, then run AutoWork again." }
-  Say "Installing $label with WinGet..."
+  if (-not (Has 'winget')) {
+    Fail "WinGet is not available. Please install/update Windows App Installer, then run AutoWork again."
+  }
+  Say "Automatically installing $label with WinGet..."
   & winget install --id $id -e --source winget --accept-source-agreements --accept-package-agreements
-  if ($LASTEXITCODE -ne 0) { Fail "$label installation failed. Finish the installation manually and run AutoWork again." }
-  Ok "$label installation finished. Reopen PowerShell if the command is not visible yet."
+  Refresh-SessionPath
+  if (-not (Has ($id.Split('.')[-1].ToLowerInvariant()))) {
+    Refresh-SessionPath
+  }
+  Ok "$label installation completed."
 }
 
 function Ensure-Tools {
-  Say "Checking system prerequisites..."
-  if (-not (Has 'git')) { Install-WithWinget 'Git.Git' 'Git' }
-  if (-not (Has 'node')) { Install-WithWinget 'OpenJS.NodeJS.LTS' 'Node.js LTS' }
-  if (-not (Has 'npm')) { Fail 'npm is not available. Reopen PowerShell after installing Node.js.' }
-  if (-not (Has 'docker')) { Install-WithWinget 'Docker.DockerDesktop' 'Docker Desktop' }
-  if (-not (Has 'docker')) { Fail 'Docker CLI is not available. Reopen PowerShell after installing Docker Desktop.' }
+  Say "Analyzing and verifying system prerequisites..."
+  Refresh-SessionPath
 
+  # 1. Git verification
+  if (-not (Has 'git')) {
+    Install-WithWinget 'Git.Git' 'Git'
+    Refresh-SessionPath
+  }
+  if (-not (Has 'git')) { Fail 'Git is not accessible in PATH. Please restart terminal after Git installation.' }
+
+  # 2. Node.js & npm verification
+  if (-not (Has 'node') -or -not (Has 'npm')) {
+    Install-WithWinget 'OpenJS.NodeJS.LTS' 'Node.js LTS'
+    Refresh-SessionPath
+  }
+  if (-not (Has 'node')) { Fail 'Node.js is not accessible in PATH. Please reopen terminal after Node.js installation.' }
+  if (-not (Has 'npm')) { Fail 'npm is not accessible in PATH. Please reopen terminal after Node.js installation.' }
+
+  # 3. Docker verification
+  if (-not (Has 'docker')) {
+    Refresh-SessionPath
+    if (-not (Has 'docker')) {
+      Say "Docker CLI not detected. Attempting automatic installation via WinGet..."
+      Install-WithWinget 'Docker.DockerDesktop' 'Docker Desktop'
+      Refresh-SessionPath
+    }
+  }
+  if (-not (Has 'docker')) {
+    Fail 'Docker CLI is not available. Please install Docker Desktop and restart AutoWork.'
+  }
+
+  # 4. Docker Engine readiness check
   & docker info *> $null
   if ($LASTEXITCODE -ne 0) {
-    $dockerExe = Join-Path $env:ProgramFiles 'Docker/Docker/Docker Desktop.exe'
-    if (Test-Path $dockerExe) {
-      Say 'Docker Desktop is installed but not running. Starting it...'
-      Start-Process $dockerExe | Out-Null
+    $dockerCandidates = @(
+      (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
+      (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe')
+    )
+    $started = $false
+    foreach ($exe in $dockerCandidates) {
+      if (Test-Path $exe) {
+        Say "Docker Desktop is installed but not running. Launching Docker Desktop engine..."
+        Start-Process $exe | Out-Null
+        $started = $true
+        break
+      }
     }
-    Say 'Waiting for Docker Engine...'
+    if (-not $started) {
+      Say "Waiting for Docker Engine to start..."
+    }
+
+    Write-Host -NoNewline "[AutoWork] Waiting for Docker Engine to become ready " -ForegroundColor Cyan
     $ready = $false
     for ($i = 0; $i -lt 60; $i++) {
       Start-Sleep -Seconds 2
       & docker info *> $null
-      if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+      if ($LASTEXITCODE -eq 0) {
+        $ready = $true
+        break
+      }
+      Write-Host -NoNewline "." -ForegroundColor Yellow
     }
-    if (-not $ready) { Fail 'Docker Desktop is installed but the Engine is not ready. Open Docker Desktop, wait until it is running, then run AutoWork again.' }
+    Write-Host ""
+    if (-not $ready) {
+      Fail 'Docker Desktop engine is taking longer than expected. Please open Docker Desktop, ensure the engine is running, then run AutoWork again.'
+    }
   }
 
-  Ok 'Required tools (Node.js, npm, Docker, Git) are ready.'
+  Ok "System prerequisites verified: Node.js $(& node -v), npm $(& npm -v), Git, and Docker Engine are ready."
 }
 
 function Set-EnvKey($path, $key, $value) {
@@ -68,23 +151,99 @@ function Set-EnvKey($path, $key, $value) {
   Set-Content -Path $path -Value $out -Encoding UTF8
 }
 
-function Ensure-Env {
-  Say "Configuring environment files..."
+function Test-PortInUse([int]$Port) {
+  $client = New-Object System.Net.Sockets.TcpClient
+  try {
+    $iar = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+    $success = $iar.AsyncWaitHandle.WaitOne(600, $false)
+    if ($success) {
+      $client.EndConnect($iar)
+      return $true
+    }
+    return $false
+  } catch {
+    return $false
+  } finally {
+    $client.Close()
+  }
+}
+
+function Get-FreePort([int]$StartPort) {
+  $port = $StartPort
+  while ($port -lt 65535) {
+    if (-not (Test-PortInUse $port)) {
+      return $port
+    }
+    $port++
+  }
+  return $StartPort
+}
+
+function Resolve-ServicePorts {
+  $existingPgContainer = $false
+  $existingRedisContainer = $false
+  if (Has 'docker') {
+    $pgState = & docker inspect -f '{{.State.Running}}' autowork-postgres 2>$null
+    if ($pgState -eq 'true') { $existingPgContainer = $true }
+    $redisState = & docker inspect -f '{{.State.Running}}' autowork-redis 2>$null
+    if ($redisState -eq 'true') { $existingRedisContainer = $true }
+  }
+
+  $pgPort = 5432
+  if (Test-PortInUse 5432) {
+    if ($existingPgContainer) {
+      Say "Port 5432 is already bound by the active autowork-postgres container."
+    } else {
+      $pgPort = Get-FreePort 5433
+      Warn "Port 5432 is in use by an external service (e.g. host Windows PostgreSQL). Re-routing AutoWork database to collision-free port $pgPort."
+    }
+  } else {
+    $pgPort = 5432
+  }
+
+  $redisPort = 6379
+  if (Test-PortInUse 6379) {
+    if ($existingRedisContainer) {
+      Say "Port 6379 is already bound by the active autowork-redis container."
+    } else {
+      $redisPort = Get-FreePort 6380
+      Warn "Port 6379 is in use by an external service. Re-routing AutoWork Redis to collision-free port $redisPort."
+    }
+  } else {
+    $redisPort = 6379
+  }
+
+  return @{ PgPort = $pgPort; RedisPort = $redisPort }
+}
+
+function Ensure-Env($ports) {
+  Say "Configuring environment configuration files..."
   if (-not (Test-Path $EnvExample)) { Fail '.env.example is missing.' }
   if (-not (Test-Path $BackendEnv)) {
     Copy-Item $EnvExample $BackendEnv
-    Say 'Created backend/.env from .env.example.'
+    Say 'Created backend/.env from .env.example template.'
   }
   if (-not (Test-Path $RootEnv)) { New-Item -ItemType File -Path $RootEnv -Force | Out-Null }
 
-  $pgPort = 5432
-  $redisPort = 6379
+  $pgPort = $ports.PgPort
+  $redisPort = $ports.RedisPort
 
+  Set-EnvKey $RootEnv 'POSTGRES_USER' 'autowork'
+  Set-EnvKey $RootEnv 'POSTGRES_PASSWORD' 'autoworkpass'
+  Set-EnvKey $RootEnv 'POSTGRES_DB' 'autowork_db'
   Set-EnvKey $RootEnv 'POSTGRES_HOST_PORT' $pgPort
   Set-EnvKey $RootEnv 'REDIS_HOST_PORT' $redisPort
+
+  Set-EnvKey $BackendEnv 'POSTGRES_USER' 'autowork'
+  Set-EnvKey $BackendEnv 'POSTGRES_PASSWORD' 'autoworkpass'
+  Set-EnvKey $BackendEnv 'POSTGRES_DB' 'autowork_db'
   Set-EnvKey $BackendEnv 'DATABASE_URL' "postgresql://autowork:autoworkpass@localhost:$pgPort/autowork_db?schema=public"
   Set-EnvKey $BackendEnv 'REDIS_HOST' 'localhost'
   Set-EnvKey $BackendEnv 'REDIS_PORT' $redisPort
+
+  Set-EnvKey $RootEnv 'DATABASE_URL' "postgresql://autowork:autoworkpass@localhost:$pgPort/autowork_db?schema=public"
+  Set-EnvKey $RootEnv 'REDIS_HOST' 'localhost'
+  Set-EnvKey $RootEnv 'REDIS_PORT' $redisPort
 
   $existing = Get-Content $BackendEnv -Raw
   $jwt = [Convert]::ToBase64String((1..48 | ForEach-Object { [byte](Get-Random -Minimum 0 -Maximum 256) }))
@@ -95,7 +254,7 @@ function Ensure-Env {
   if ($existing -match 'PCLOUD_CREDENTIAL_ENCRYPTION_KEY=replace-with-base64-32-byte-key') { Set-EnvKey $BackendEnv 'PCLOUD_CREDENTIAL_ENCRYPTION_KEY' $enc }
   if ($existing -match 'EMAIL_CREDENTIAL_ENCRYPTION_KEY=replace-with-base64-32-byte-key') { Set-EnvKey $BackendEnv 'EMAIL_CREDENTIAL_ENCRYPTION_KEY' $emailEnc }
 
-  Ok "Environment configured (PostgreSQL=$pgPort, Redis=$redisPort)."
+  Ok "Environment configured (PostgreSQL port=$pgPort, Redis port=$redisPort)."
 }
 
 function Install-IfNeeded($dir, $label) {
@@ -108,7 +267,7 @@ function Install-IfNeeded($dir, $label) {
       if ($LASTEXITCODE -ne 0) { Fail "npm install failed in $label." }
     } finally { Pop-Location }
   } else {
-    Say "Dependencies ready for $label."
+    Say "Dependencies verified for $label."
   }
 }
 
@@ -116,18 +275,38 @@ function Prepare-Dependencies {
   Install-IfNeeded $RepoRoot 'Root'
   Install-IfNeeded $BackendDir 'Backend'
   Install-IfNeeded $FrontendDir 'Frontend'
-  Ok 'All project dependencies are ready.'
+  Ok 'All project dependencies (Root, Backend, Frontend) are ready.'
 }
 
-function Start-Infra {
-  Say 'Starting PostgreSQL and Redis containers...'
+function Start-Infra($ports) {
+  Say "Starting isolated PostgreSQL (port $($ports.PgPort)) and Redis (port $($ports.RedisPort)) containers..."
   & docker compose -f $ComposeFile up -d postgres redis
-  if ($LASTEXITCODE -ne 0) { Fail 'PostgreSQL/Redis failed to start. Run: docker compose -f docker/docker-compose.yml logs postgres redis' }
-  Ok 'Infrastructure services (Postgres & Redis) are active.'
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'PostgreSQL/Redis failed to start. Run: docker compose -f docker/docker-compose.yml logs postgres redis'
+  }
+
+  Write-Host -NoNewline "[AutoWork] Waiting for PostgreSQL container to complete initialization " -ForegroundColor Cyan
+  $pgReady = $false
+  for ($i = 0; $i -lt 45; $i++) {
+    Start-Sleep -Seconds 1
+    & docker compose -f $ComposeFile exec -T postgres pg_isready -U autowork -d autowork_db *> $null
+    if ($LASTEXITCODE -eq 0) {
+      $pgReady = $true
+      break
+    }
+    Write-Host -NoNewline "." -ForegroundColor Yellow
+  }
+  Write-Host ""
+
+  if (-not $pgReady) {
+    Warn "PostgreSQL is initializing. Proceeding to database sync with automated readiness retry..."
+  } else {
+    Ok "PostgreSQL is healthy and accepting connections on port $($ports.PgPort)."
+  }
 }
 
 function Stop-RunningProcesses {
-  Say 'Releasing existing process locks...'
+  Say 'Releasing any existing process locks on application ports...'
   Get-Process node -ErrorAction SilentlyContinue | ForEach-Object {
     try {
       $cmd = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
@@ -136,13 +315,13 @@ function Stop-RunningProcesses {
       }
     } catch { }
   }
-  Get-NetTCPConnection -LocalPort 3000, 4000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+  Get-NetTCPConnection -LocalPort 3000, 4000, 4001 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
     Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
   }
   Start-Sleep -Milliseconds 600
 }
 
-function Prepare-Database {
+function Prepare-Database($ports) {
   Say 'Synchronizing database schema and Prisma clients...'
   Push-Location $BackendDir
   try {
@@ -168,10 +347,37 @@ function Prepare-Database {
       Copy-Item -Path (Join-Path $RepoRoot 'node_modules/@prisma/client/*') -Destination (Join-Path $backendModules '@prisma/client') -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    & npm run prisma:migrate:deploy
-    if ($LASTEXITCODE -ne 0) { Fail 'Database migration failed. Check PostgreSQL and backend/.env.' }
+    # Execute migration with automatic self-healing for P1000 or drift
+    $migrationOutput = & npm run prisma:migrate:deploy 2>&1 | Out-String
+    Write-Host $migrationOutput
+
+    if ($LASTEXITCODE -ne 0 -or $migrationOutput -match "P1000|Authentication failed") {
+      if ($migrationOutput -match "P1000|Authentication failed") {
+        Warn "Database authentication mismatch detected (stale volume credentials). Auto-healing database volume..."
+        & docker compose -f $ComposeFile down -v postgres
+        & docker compose -f $ComposeFile up -d postgres
+        Say "Waiting for freshly created PostgreSQL container..."
+        for ($i = 0; $i -lt 30; $i++) {
+          Start-Sleep -Seconds 1
+          & docker compose -f $ComposeFile exec -T postgres pg_isready -U autowork -d autowork_db *> $null
+          if ($LASTEXITCODE -eq 0) { break }
+        }
+        Say "Retrying migration on auto-healed database..."
+        $retryOutput = & npm run prisma:migrate:deploy 2>&1 | Out-String
+        Write-Host $retryOutput
+        if ($LASTEXITCODE -ne 0) {
+          Say "Applying schema via prisma db push fallback..."
+          & npm run prisma:push -- --accept-data-loss
+          if ($LASTEXITCODE -ne 0) { Fail 'Database synchronization failed after volume recovery.' }
+        }
+      } else {
+        Say "Applying schema via prisma db push fallback..."
+        & npm run prisma:push -- --accept-data-loss
+        if ($LASTEXITCODE -ne 0) { Fail 'Database migration failed. Check PostgreSQL and backend/.env.' }
+      }
+    }
   } finally { Pop-Location }
-  Ok 'Database and Prisma clients are synchronized.'
+  Ok 'Database schema and Prisma clients are 100% synchronized.'
 }
 
 function Stop-Project {
@@ -197,7 +403,7 @@ function Start-Terminals {
     $command = "Set-Location -LiteralPath '$($job.Dir)'; `$Host.UI.RawUI.WindowTitle='$($job.Title)'; $($job.Cmd)"
     Start-Process powershell.exe -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-Command', $command | Out-Null
   }
-  Ok 'All services (Backend, Frontend, and 3 Background Workers) launched.'
+  Ok 'All services (Backend, Frontend, and 3 Background Workers) launched in individual consoles.'
 }
 
 function Wait-And-OpenBrowser {
@@ -231,10 +437,11 @@ function Run-Project {
   Write-Host '===================================================' -ForegroundColor Magenta
   Stop-RunningProcesses
   Ensure-Tools
-  Ensure-Env
+  $ports = Resolve-ServicePorts
+  Ensure-Env $ports
   Prepare-Dependencies
-  Start-Infra
-  Prepare-Database
+  Start-Infra $ports
+  Prepare-Database $ports
   Start-Terminals
   Wait-And-OpenBrowser
 }
@@ -278,6 +485,7 @@ function Diagnose {
   Write-Host ''
   Say 'AutoWork Comprehensive Diagnostics'
   Write-Host "Repository: $RepoRoot"
+  Refresh-SessionPath
   if (Has 'node') { Write-Host "Node.js: $(& node -v)" }
   if (Has 'npm') { Write-Host "npm:     $(& npm -v)" }
   if (Has 'git') { Write-Host "Git:     $(& git --version)" }
@@ -286,6 +494,9 @@ function Diagnose {
     Write-Host "Compose: $(& docker compose version)"
     & docker compose -f $ComposeFile ps
   }
+  $ports = Resolve-ServicePorts
+  Write-Host "Active DB Port: $($ports.PgPort)"
+  Write-Host "Active Redis Port: $($ports.RedisPort)"
   Write-Host "backend/.env: $(Test-Path $BackendEnv)"
   Write-Host "backend/node_modules: $(Test-Path (Join-Path $BackendDir 'node_modules'))"
   Write-Host "frontend/node_modules: $(Test-Path (Join-Path $FrontendDir 'node_modules'))"

@@ -8,6 +8,7 @@
     "worker:pcloud": "ts-node -r dotenv/config workers/pcloud-share.worker.entry.ts",
     "worker:email": "ts-node -r dotenv/config workers/email-dispatch.worker.entry.ts",
     "prisma:generate": "prisma generate --schema=./prisma/schema.prisma",
+    "prisma:push": "prisma db push --schema=./prisma/schema.prisma",
     "prisma:migrate": "prisma migrate deploy --schema=./prisma/schema.prisma"
   },
   "dependencies": {
