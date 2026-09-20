@@ -460,17 +460,25 @@ function Stop-Project {
 function Start-Terminals {
   Stop-RunningProcesses
 
-  $jobs = @(
-    @{Title='AutoWork Backend API'; Dir=$BackendDir; Cmd='npm run start:dev'},
-    @{Title='AutoWork Frontend App'; Dir=$FrontendDir; Cmd='npm run dev'},
+  # 1. Launch background workers quietly without popups
+  $workers = @(
     @{Title='AutoWork Campaign Worker'; Dir=$RepoRoot; Cmd='npm run worker:campaign'},
     @{Title='AutoWork pCloud Worker'; Dir=$RepoRoot; Cmd='npm run worker:pcloud'},
     @{Title='AutoWork Email Worker'; Dir=$RepoRoot; Cmd='npm run worker:email'}
   )
-  foreach ($job in $jobs) {
-    Start-Process -FilePath "cmd.exe" -WorkingDirectory $job.Dir -ArgumentList "/k", "title $($job.Title) && set ""PATH=$($env:Path)"" && $($job.Cmd)" | Out-Null
+  foreach ($w in $workers) {
+    Start-Process -FilePath "cmd.exe" -WorkingDirectory $w.Dir -ArgumentList "/c", $w.Cmd -WindowStyle Hidden | Out-Null
   }
-  Ok 'All services (Backend, Frontend, and 3 Background Workers) launched in individual consoles.'
+
+  # 2. Launch main services (Backend API and Frontend App)
+  $services = @(
+    @{Title='AutoWork Backend API'; Dir=$BackendDir; Cmd='npm run start:dev'},
+    @{Title='AutoWork Frontend App'; Dir=$FrontendDir; Cmd='npm run dev'}
+  )
+  foreach ($s in $services) {
+    Start-Process -FilePath "cmd.exe" -WorkingDirectory $s.Dir -ArgumentList "/k", "title $($s.Title) && $($s.Cmd)" | Out-Null
+  }
+  Ok 'Services launched (Background workers running quietly, Backend & Frontend consoles active).'
 }
 
 function Wait-And-OpenBrowser {
@@ -503,7 +511,7 @@ function Wait-And-OpenBrowser {
   Write-Host ""
 
   if (-not $backendReady) {
-    Warn "Backend API is taking longer than usual to compile. Please check the 'AutoWork Backend API' console window."
+    Warn "Backend API is still compiling. Please check the 'AutoWork Backend API' console window."
   } else {
     Ok "Backend API is healthy and active on http://localhost:4000."
   }
@@ -514,14 +522,16 @@ function Wait-And-OpenBrowser {
     Ok "Frontend App is healthy and active on http://localhost:3000."
   }
 
-  Say '🚀 AutoWork is LIVE!'
-  Write-Host '---------------------------------------------------' -ForegroundColor Cyan
-  Write-Host '  Web Application:  http://localhost:3000' -ForegroundColor Green
-  Write-Host '  API Health Check: http://localhost:4000/api/health' -ForegroundColor Yellow
-  Write-Host '  Swagger API Docs: http://localhost:4000/api/docs' -ForegroundColor Yellow
-  Write-Host '---------------------------------------------------' -ForegroundColor Cyan
+  if ($backendReady -or $frontendReady) {
+    Say '🚀 AutoWork is LIVE!'
+    Write-Host '---------------------------------------------------' -ForegroundColor Cyan
+    Write-Host '  Web Application:  http://localhost:3000' -ForegroundColor Green
+    Write-Host '  API Health Check: http://localhost:4000/api/health' -ForegroundColor Yellow
+    Write-Host '  Swagger API Docs: http://localhost:4000/api/docs' -ForegroundColor Yellow
+    Write-Host '---------------------------------------------------' -ForegroundColor Cyan
 
-  Start-Process 'http://localhost:3000' | Out-Null
+    Start-Process 'http://localhost:3000' | Out-Null
+  }
 }
 
 function Run-Project {
