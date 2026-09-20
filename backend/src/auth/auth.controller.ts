@@ -82,16 +82,6 @@ export class AuthController {
     return result;
   }
 
-  @Post('demo-login')
-  @ApiOperation({ summary: 'Instant 1-Click Demo Login for remote testers and clients' })
-  async demoLogin(
-    @Res({ passthrough: true }) res: Response,
-    @Request() req: any,
-  ) {
-    const result = await this.authService.getOrCreateDemoUser();
-    setAuthCookie(req, res, result.token);
-    return result;
-  }
 
   @Post('logout')
   @ApiOperation({ summary: 'Clear the current authentication session' })

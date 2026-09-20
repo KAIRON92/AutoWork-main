@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { authService } from '@/services/authService';
-import { Cloud, Mail, Lock, ArrowRight, Eye, EyeOff, CheckCircle2, Zap, Sparkles } from 'lucide-react';
+import { Cloud, Mail, Lock, ArrowRight, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import Link from 'next/link';
 
 export default function LoginPage() {
@@ -12,7 +12,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isDemoLoading, setIsDemoLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -28,43 +27,6 @@ export default function LoginPage() {
       }
     }
   }, []);
-
-  const handleDemoLogin = async () => {
-    try {
-      setIsDemoLoading(true);
-      setErrorMsg('');
-      setSuccessMsg('Initializing 1-Click Demo workspace...');
-      await authService.demoLogin();
-      setSuccessMsg('Demo session activated! Redirecting to Dashboard...');
-      setTimeout(() => {
-        const searchParams = new URLSearchParams(window.location.search);
-        let target = searchParams.get('redirect') || '/dashboard';
-        if (
-          !target ||
-          target.startsWith('/login') ||
-          target.startsWith('/register') ||
-          target.startsWith('/logout') ||
-          target.startsWith('/forgot-password')
-        ) {
-          target = '/dashboard';
-        }
-        window.location.href = target;
-      }, 300);
-    } catch (err: any) {
-      setErrorMsg(
-        err.response?.data?.message ||
-        err.message ||
-        'Demo Login failed. Please verify that the AutoWork backend is running.'
-      );
-      setIsDemoLoading(false);
-    }
-  };
-
-  const handleQuickFill = () => {
-    setEmail('demo@autowork.local');
-    setPassword('autowork123');
-    setErrorMsg('');
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,7 +56,7 @@ export default function LoginPage() {
       setErrorMsg(
         err.response?.data?.message ||
         err.message ||
-        'Invalid email or password. You can use 1-Click Demo Login above to test instantly.'
+        'Invalid email or password. Please verify your credentials and try again.'
       );
     } finally {
       setIsLoading(false);
@@ -112,26 +74,6 @@ export default function LoginPage() {
           <p className="text-xs text-slate-400">pCloud Document Sharing & Campaign Orchestrator</p>
         </div>
 
-        {/* 1-CLICK INSTANT DEMO ACCESS FOR CLIENTS / TEAM MEMBERS */}
-        <div className="p-4 rounded-2xl bg-linear-to-r from-blue-950/70 via-indigo-950/70 to-cyan-950/70 border border-cyan-500/30 space-y-2.5">
-          <div className="flex items-center gap-2 text-cyan-300 font-bold text-xs">
-            <Sparkles className="h-4 w-4 text-cyan-400 shrink-0" />
-            <span>Client & Team Live Testing</span>
-          </div>
-          <p className="text-[11px] text-slate-300 leading-relaxed">
-            No signup or password required. Click below to explore the full dashboard, campaigns, and pCloud features immediately.
-          </p>
-          <button
-            type="button"
-            onClick={handleDemoLogin}
-            disabled={isDemoLoading || isLoading}
-            className="w-full py-2.5 px-4 bg-linear-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-extrabold rounded-xl text-xs transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-          >
-            <Zap className="h-4 w-4 fill-slate-950 text-slate-950" />
-            <span>{isDemoLoading ? 'Launching Demo...' : '⚡ 1-Click Instant Demo Login'}</span>
-          </button>
-        </div>
-
         {successMsg && (
           <div className="p-3.5 rounded-xl bg-emerald-950/70 border border-emerald-700 text-emerald-300 text-xs font-medium flex items-center gap-2.5" role="status">
             <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
@@ -145,24 +87,9 @@ export default function LoginPage() {
           </div>
         )}
 
-        <div className="relative flex py-1 items-center">
-          <div className="grow border-t border-slate-800"></div>
-          <span className="shrink mx-3 text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Or Sign In With Account</span>
-          <div className="grow border-t border-slate-800"></div>
-        </div>
-
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           <div>
-            <div className="flex items-center justify-between mb-1">
-              <label htmlFor="login-email" className="block text-slate-300 font-semibold uppercase">Email Address</label>
-              <button
-                type="button"
-                onClick={handleQuickFill}
-                className="text-[11px] text-cyan-400 hover:underline"
-              >
-                Auto-fill Demo Credentials
-              </button>
-            </div>
+            <label htmlFor="login-email" className="block text-slate-300 font-semibold uppercase mb-1">Email Address</label>
             <div className="relative">
               <Mail className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" aria-hidden="true" />
               <input
@@ -174,7 +101,7 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com or demo@autowork.local"
+                placeholder="you@company.com"
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500"
               />
             </div>
@@ -214,7 +141,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={isLoading || isDemoLoading}
+            disabled={isLoading}
             className="w-full py-3 bg-linear-to-r from-blue-600 to-cyan-600 hover:opacity-95 disabled:opacity-60 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 mt-4 cursor-pointer"
           >
             <span>{isLoading ? 'Signing in...' : 'Sign In to Command Center'}</span>

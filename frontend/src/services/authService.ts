@@ -49,19 +49,6 @@ export const authService = {
     return data;
   },
 
-  async demoLogin(): Promise<AuthResponse> {
-    const response = await apiClient.post('/v1/auth/demo-login');
-    const data = response.data;
-    if (typeof window !== 'undefined' && data?.token) {
-      localStorage.setItem('autowork_jwt_token', data.token);
-      document.cookie = `autowork_jwt_token=${encodeURIComponent(data.token)}; Path=/; Max-Age=604800; SameSite=Lax${window.location.protocol === 'https:' ? '; Secure' : ''}`;
-    }
-    if (data?.user && data?.organization) {
-      useAuthStore.getState().setAuth(data.user, data.organization, data.token || '');
-    }
-    return data;
-  },
-
   async logout(): Promise<void> {
     try {
       await apiClient.post('/v1/auth/logout');
