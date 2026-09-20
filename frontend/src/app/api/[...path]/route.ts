@@ -66,65 +66,61 @@ async function handleProxy(request: NextRequest, params: { path: string[] }) {
     } catch {}
   }
 
-  try {
-    const res = await fetch(targetUrl, {
-      method: request.method,
-      headers,
-      body,
-      redirect: 'manual',
-    });
+  let res: Response | null = null;
+  let lastError: any = null;
+  const urlsToTry = [targetUrl, `http://localhost:4000/api/${path}${search}`];
 
-    const resHeaders = new Headers();
-    res.headers.forEach((val, key) => {
-      if (key.toLowerCase() !== 'set-cookie') {
-        resHeaders.set(key, val);
+  for (const url of urlsToTry) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (url.includes('localhost:4000')) {
+          headers.set('host', 'localhost:4000');
+        }
+        res = await fetch(url, {
+          method: request.method,
+          headers,
+          body,
+          redirect: 'manual',
+        });
+        if (res) break;
+      } catch (fetchErr: any) {
+        lastError = fetchErr;
+        if (attempt === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
       }
-    });
-
-    if (typeof (res.headers as any).getSetCookie === 'function') {
-      const cookies = (res.headers as any).getSetCookie();
-      for (const c of cookies) {
-        resHeaders.append('set-cookie', c);
-      }
-    } else {
-      const sc = res.headers.get('set-cookie');
-      if (sc) resHeaders.set('set-cookie', sc);
     }
-
-    const resBody = await res.arrayBuffer();
-    return new NextResponse(resBody, {
-      status: res.status,
-      statusText: res.statusText,
-      headers: resHeaders,
-    });
-  } catch (err: any) {
-    // Fallback attempt to localhost if 127.0.0.1 failed
-    try {
-      const fallbackUrl = `http://localhost:4000/api/${path}${search}`;
-      headers.set('host', 'localhost:4000');
-      const resFallback = await fetch(fallbackUrl, {
-        method: request.method,
-        headers,
-        body,
-        redirect: 'manual',
-      });
-      const resHeaders = new Headers();
-      resFallback.headers.forEach((val, key) => {
-        if (key.toLowerCase() !== 'set-cookie') resHeaders.set(key, val);
-      });
-      const cookies = typeof (resFallback.headers as any).getSetCookie === 'function' ? (resFallback.headers as any).getSetCookie() : [];
-      for (const c of cookies) resHeaders.append('set-cookie', c);
-      const resBody = await resFallback.arrayBuffer();
-      return new NextResponse(resBody, {
-        status: resFallback.status,
-        statusText: resFallback.statusText,
-        headers: resHeaders,
-      });
-    } catch (fallbackErr: any) {
-      return NextResponse.json(
-        { message: 'AutoWork backend service is offline. Run start.bat on host.', error: fallbackErr?.message || err?.message },
-        { status: 502 }
-      );
-    }
+    if (res) break;
   }
+
+  if (!res) {
+    return NextResponse.json(
+      { message: 'AutoWork backend service is initializing. Please wait a moment and refresh.', error: lastError?.message || 'Connection refused' },
+      { status: 502 }
+    );
+  }
+
+  const resHeaders = new Headers();
+  res.headers.forEach((val, key) => {
+    if (key.toLowerCase() !== 'set-cookie') {
+      resHeaders.set(key, val);
+    }
+  });
+
+  if (typeof (res.headers as any).getSetCookie === 'function') {
+    const cookies = (res.headers as any).getSetCookie();
+    for (const c of cookies) {
+      resHeaders.append('set-cookie', c);
+    }
+  } else {
+    const sc = res.headers.get('set-cookie');
+    if (sc) resHeaders.set('set-cookie', sc);
+  }
+
+  const resBody = await res.arrayBuffer();
+  return new NextResponse(resBody, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: resHeaders,
+  });
 }

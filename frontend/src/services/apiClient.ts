@@ -32,10 +32,15 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
+    if (typeof window !== 'undefined') {
+      const status = error.response?.status;
       const pathname = window.location.pathname;
-      if (!['/login', '/register', '/forgot-password', '/reset-password'].some((route) => pathname.startsWith(route))) {
-        window.location.href = `/login?redirect=${encodeURIComponent(pathname)}`;
+      const isAuthPage = ['/login', '/register', '/forgot-password', '/reset-password'].some((route) => pathname.startsWith(route));
+      if ((status === 401 || status === 502) && !isAuthPage) {
+        const token = localStorage.getItem('autowork_jwt_token');
+        if (!token || status === 401) {
+          window.location.href = `/login?redirect=${encodeURIComponent(pathname)}`;
+        }
       }
     }
     return Promise.reject(error);

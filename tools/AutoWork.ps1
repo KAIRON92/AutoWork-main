@@ -471,6 +471,7 @@ function Stop-Project {
 function Start-Terminals {
   Stop-RunningProcesses
 
+  $safePath = $env:Path.Replace("'", "''")
   $jobs = @(
     @{Title='AutoWork Backend API'; Dir=$BackendDir; Cmd='npm run start:dev'},
     @{Title='AutoWork Frontend App'; Dir=$FrontendDir; Cmd='npm run dev'},
@@ -479,24 +480,46 @@ function Start-Terminals {
     @{Title='AutoWork Email Worker'; Dir=$RepoRoot; Cmd='npm run worker:email'}
   )
   foreach ($job in $jobs) {
-    $command = "Set-Location -LiteralPath '$($job.Dir)'; `$Host.UI.RawUI.WindowTitle='$($job.Title)'; $($job.Cmd)"
+    $command = "`$env:Path = '$safePath'; Set-Location -LiteralPath '$($job.Dir)'; `$Host.UI.RawUI.WindowTitle='$($job.Title)'; $($job.Cmd)"
     Start-Process powershell.exe -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-Command', $command | Out-Null
   }
   Ok 'All services (Backend, Frontend, and 3 Background Workers) launched in individual consoles.'
 }
 
 function Wait-And-OpenBrowser {
-  Say 'Waiting for services to become healthy...'
-  $ready = $false
-  for ($i = 0; $i -lt 35; $i++) {
-    Start-Sleep -Seconds 2
-    try {
-      $res = Invoke-RestMethod -Uri 'http://localhost:4000/api/health' -TimeoutSec 2 -ErrorAction SilentlyContinue
-      if ($res -and ($res.status -eq 'OK' -or $res.subsystems.api -eq 'HEALTHY')) {
-        $ready = $true
-        break
-      }
-    } catch { }
+  Write-Host -NoNewline "[AutoWork] Waiting for Backend API and Frontend App to initialize " -ForegroundColor Cyan
+  $backendReady = $false
+  $frontendReady = $false
+  for ($i = 0; $i -lt 45; $i++) {
+    Start-Sleep -Seconds 1
+    if (-not $backendReady) {
+      try {
+        $res = Invoke-RestMethod -Uri 'http://localhost:4000/api/health' -TimeoutSec 2 -ErrorAction SilentlyContinue
+        if ($res -and ($res.status -eq 'OK' -or $res.subsystems.api -eq 'HEALTHY')) {
+          $backendReady = $true
+        }
+      } catch { }
+    }
+    if (-not $frontendReady) {
+      try {
+        $res = Invoke-WebRequest -Uri 'http://localhost:3000' -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
+        if ($res.StatusCode -eq 200 -or $res.StatusCode -eq 307 -or $res.StatusCode -eq 308) {
+          $frontendReady = $true
+        }
+      } catch { }
+    }
+    if ($backendReady -and $frontendReady) {
+      break
+    }
+    Write-Host -NoNewline "." -ForegroundColor Yellow
+  }
+  Write-Host ""
+
+  if (-not $backendReady) {
+    Warn "Backend API is still warming up in its dedicated terminal. It will be online in a few moments."
+  }
+  if (-not $frontendReady) {
+    Warn "Frontend App is compiling in its dedicated terminal."
   }
 
   Say '🚀 AutoWork is LIVE!'

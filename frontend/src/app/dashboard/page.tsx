@@ -45,14 +45,20 @@ export default function DashboardPage() {
       ]);
       setMetrics(m);
       setAccounts(accs);
-    } catch (e) {
-      console.error('Failed to load dashboard data:', e);
+    } catch (e: any) {
+      if (e?.response?.status !== 401) {
+        console.warn('Dashboard data sync notice:', e?.message || e);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('autowork_jwt_token') : null;
+    if (!token) {
+      return;
+    }
     loadData();
   }, []);
 
