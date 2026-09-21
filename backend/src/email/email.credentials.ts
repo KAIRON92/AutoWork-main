@@ -6,7 +6,10 @@ const VERSION = 'v1';
 const FALLBACK_KEY = 'X1LEAIg6nJyed26Ze3kI62oh0+M/cP3cSGJON0yzVnk=';
 
 function getKey(): Buffer {
-  const raw = process.env.PCLOUD_CREDENTIAL_ENCRYPTION_KEY?.trim() || FALLBACK_KEY;
+  const raw =
+    process.env.EMAIL_CREDENTIAL_ENCRYPTION_KEY?.trim() ||
+    process.env.PCLOUD_CREDENTIAL_ENCRYPTION_KEY?.trim() ||
+    FALLBACK_KEY;
   try {
     const key = Buffer.from(raw, 'base64');
     if (key.length === 32) return key;
