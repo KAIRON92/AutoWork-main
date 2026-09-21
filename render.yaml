@@ -31,15 +31,17 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: PCLOUD_CREDENTIAL_ENCRYPTION_KEY
-        value: X1LEAIg6nJyed26Ze3kI62oh0+M/cP3cSGJON0yzVnk=
+        sync: false # Provide a base64-encoded 32-byte AES-256-GCM key
+      - key: EMAIL_CREDENTIAL_ENCRYPTION_KEY
+        sync: false # Provide a base64-encoded 32-byte AES-256-GCM key
       - key: PCLOUD_DEFAULT_PROVIDER
         value: pcloud
       - key: PCLOUD_ALLOW_MOCK
-        value: "true"
+        value: "false"
       - key: PCLOUD_CLIENT_ID
-        value: LKgngYPdexJ
+        sync: false
       - key: PCLOUD_CLIENT_SECRET
-        value: Iv2AO9hDCYYKaWBjwYYigJA6BJkk
+        sync: false
       - key: FRONTEND_URL
         sync: false # Set this to your Vercel URL, e.g. https://your-project.vercel.app
 
