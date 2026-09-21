@@ -79,11 +79,11 @@ Is guide ko follow karke aap **5 se 10 minute** mein live URL generate kar sakte
      | `PORT` | `4000` |
      | `DATABASE_URL` | (Aapka PostgreSQL Connection String) |
      | `REDIS_URL` | (Aapka Redis Connection String) |
-     | `JWT_SECRET` | `supersecretjwtkeyforautoworkauditacceptance2026` |
-     | `PCLOUD_CREDENTIAL_ENCRYPTION_KEY` | `X1LEAIg6nJyed26Ze3kI62oh0+M/cP3cSGJON0yzVnk=` |
-     | `PCLOUD_ALLOW_MOCK` | `true` |
-     | `PCLOUD_CLIENT_ID` | `LKgngYPdexJ` |
-     | `PCLOUD_CLIENT_SECRET` | `Iv2AO9hDCYYKaWBjwYYigJA6BJkk` |
+     | `JWT_SECRET` | Generate a unique secret of at least 32 characters |
+     | `PCLOUD_CREDENTIAL_ENCRYPTION_KEY` | Base64-encoded 32-byte AES-256-GCM key |
+     | `PCLOUD_ALLOW_MOCK` | `false` |
+     | `PCLOUD_CLIENT_ID` | Your pCloud application client ID |
+     | `PCLOUD_CLIENT_SECRET` | Your pCloud application client secret |
      | `FRONTEND_URL` | (Step 3 me milne wala Vercel URL) |
 
 ---
@@ -101,7 +101,7 @@ Is guide ko follow karke aap **5 se 10 minute** mein live URL generate kar sakte
    |---|---|---|
    | `BACKEND_URL` | `https://autowork-backend-xxxx.onrender.com` | Step 2 me mila Render backend URL |
    | `NEXT_PUBLIC_SOCKET_URL` | `https://autowork-backend-xxxx.onrender.com` | Realtime status ke liye backend URL |
-   | `NEXT_PUBLIC_API_URL` | `/api` | (Default: Next.js API route proxy use hoga) |
+   | `NEXT_PUBLIC_API_URL` | `/api` | Next.js proxies `/api/*` to `BACKEND_URL` |
 6. **Deploy** par click karein!
 7. 1 se 2 minute me aapko aapka live testing link mil jayega:
    👉 **`https://autowork-frontend-xxxx.vercel.app`**

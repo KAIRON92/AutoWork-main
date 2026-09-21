@@ -3,15 +3,20 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 const ALGORITHM = 'aes-256-gcm';
 const VERSION = 'v1';
 
-const FALLBACK_KEY = 'X1LEAIg6nJyed26Ze3kI62oh0+M/cP3cSGJON0yzVnk=';
-
 function getKey(): Buffer {
-  const raw = process.env.PCLOUD_CREDENTIAL_ENCRYPTION_KEY?.trim() || FALLBACK_KEY;
-  try {
-    const key = Buffer.from(raw, 'base64');
-    if (key.length === 32) return key;
-  } catch {}
-  return Buffer.from(FALLBACK_KEY, 'base64');
+  const raw =
+    process.env.EMAIL_CREDENTIAL_ENCRYPTION_KEY?.trim() ||
+    process.env.PCLOUD_CREDENTIAL_ENCRYPTION_KEY?.trim();
+
+  if (!raw) {
+    throw new Error('EMAIL_CREDENTIAL_ENCRYPTION_KEY (or the legacy PCLOUD_CREDENTIAL_ENCRYPTION_KEY) is required');
+  }
+
+  const key = Buffer.from(raw, 'base64');
+  if (key.length !== 32) {
+    throw new Error('Email credential encryption key must decode to exactly 32 bytes');
+  }
+  return key;
 }
 
 export function encryptProviderCredentials(value: string): string {

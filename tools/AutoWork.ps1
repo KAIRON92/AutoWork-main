@@ -306,6 +306,37 @@ function Ensure-Env($ports) {
   if ($existing -match 'PCLOUD_CREDENTIAL_ENCRYPTION_KEY=replace-with-base64-32-byte-key') { Set-EnvKey $BackendEnv 'PCLOUD_CREDENTIAL_ENCRYPTION_KEY' $enc }
   if ($existing -match 'EMAIL_CREDENTIAL_ENCRYPTION_KEY=replace-with-base64-32-byte-key') { Set-EnvKey $BackendEnv 'EMAIL_CREDENTIAL_ENCRYPTION_KEY' $emailEnc }
 
+  # Keep backend, root workers, Docker Compose, and Next.js on the same local configuration.
+  # Workers run from the repository root, so their credential-encryption keys must match backend/.env.
+  $backendContent = Get-Content $BackendEnv -Raw
+  foreach ($key in @(
+    'JWT_SECRET',
+    'REFRESH_TOKEN_SECRET',
+    'PCLOUD_CREDENTIAL_ENCRYPTION_KEY',
+    'EMAIL_CREDENTIAL_ENCRYPTION_KEY',
+    'PCLOUD_DEFAULT_PROVIDER',
+    'PCLOUD_ALLOW_MOCK',
+    'PCLOUD_API_URL',
+    'PCLOUD_API_HOST',
+    'PCLOUD_CLIENT_ID',
+    'PCLOUD_CLIENT_SECRET',
+    'PCLOUD_REDIRECT_URI',
+    'GMAIL_CLIENT_ID',
+    'GMAIL_CLIENT_SECRET',
+    'GMAIL_REDIRECT_URI',
+    'FRONTEND_URL'
+  )) {
+    $match = [regex]::Match($backendContent, "(?m)^\s*" + [regex]::Escape($key) + "=(.*)$")
+    if ($match.Success) {
+      Set-EnvKey $RootEnv $key $match.Groups[1].Value
+    }
+  }
+
+  # Browser-side API calls use the backend directly for local development.
+  $FrontendEnv = Join-Path $FrontendDir '.env.local'
+  Set-EnvKey $FrontendEnv 'NEXT_PUBLIC_API_URL' "http://localhost:4000/api"
+  Set-EnvKey $FrontendEnv 'NEXT_PUBLIC_SOCKET_URL' "http://localhost:4000"
+
   Ok "Environment configured (PostgreSQL port=$pgPort, Redis port=$redisPort)."
 }
 

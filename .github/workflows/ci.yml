@@ -57,6 +57,7 @@ jobs:
           PCLOUD_DEFAULT_PROVIDER: pcloud
           PCLOUD_ALLOW_MOCK: false
           PCLOUD_CREDENTIAL_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          EMAIL_CREDENTIAL_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       - run: npm test -- --runInBand
         env:
           NODE_ENV: test
@@ -67,6 +68,7 @@ jobs:
           PCLOUD_DEFAULT_PROVIDER: pcloud
           PCLOUD_ALLOW_MOCK: false
           PCLOUD_CREDENTIAL_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          EMAIL_CREDENTIAL_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
 
   frontend:
     runs-on: ubuntu-latest
